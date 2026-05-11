@@ -48,19 +48,20 @@ The app is designed to require **no secrets on the client machine**. You clone i
 | `database.py` | SQLite engine + background Supabase sync |
 | `ai_gateway.py` | Multi-model AI routing via the DevNest proxy |
 | `supabase_setup.sql` | Run once in Supabase SQL Editor to set up cloud sync |
-| `run.sh` | One-command setup and launch script |
+| `run.sh` | One-command setup and launch — Linux / macOS |
+| `run.bat` | One-command setup and launch — Windows |
 
 ---
 
 ## Quick Start
 
-**One command. Paste and go:**
+### 🐧 Linux / macOS
+
+**One command — paste and go:**
 
 ```bash
 git clone https://github.com/bitgamergws1/TaskFlow-Pro.git && cd TaskFlow-Pro && chmod +x run.sh && ./run.sh
 ```
-
-That single line clones the repo, sets everything up, and launches the dashboard. Nothing else needed — no config, no secrets, no editing any file.
 
 Already cloned? Just:
 
@@ -68,12 +69,32 @@ Already cloned? Just:
 chmod +x run.sh && ./run.sh
 ```
 
-The `run.sh` script automatically:
+---
 
-1. **Checks** Python 3.9+ is installed
-2. **Creates** a virtual environment (`venv/`)
-3. **Installs** all dependencies from `requirements.txt`
-4. **Launches** the TaskFlow Pro dashboard
+### 🪟 Windows (CMD / PowerShell)
+
+**One command — paste in CMD or PowerShell:**
+
+```cmd
+git clone https://github.com/bitgamergws1/TaskFlow-Pro.git && cd TaskFlow-Pro && run.bat
+```
+
+Already cloned? Just:
+
+```cmd
+run.bat
+```
+
+> **Note for Windows users:** Make sure Python is added to PATH during installation (check "Add Python to PATH" on the Python installer screen).
+
+---
+
+Both scripts automatically:
+
+1. **Check** Python 3.9+ is installed
+2. **Create** a virtual environment (`venv/`)
+3. **Install** all dependencies from `requirements.txt`
+4. **Launch** the TaskFlow Pro dashboard
 
 On first launch you'll see the Rich dashboard with a live AI motivation/roast message. All tasks are stored locally in `tasks.db` — cloud sync happens silently in the background.
 
@@ -81,21 +102,38 @@ On first launch you'll see the Rich dashboard with a live AI motivation/roast me
 
 ## Manual Setup
 
-If you prefer step-by-step control:
+If you prefer step-by-step control instead of the setup scripts:
+
+**Linux / macOS:**
 
 ```bash
-# 1. Clone the repo
 git clone https://github.com/bitgamergws1/TaskFlow-Pro.git
 cd TaskFlow-Pro
-
-# 2. Create and activate a virtual environment
 python3 -m venv venv
-source venv/bin/activate       # On Windows: venv\Scripts\activate
-
-# 3. Install dependencies
+source venv/bin/activate
 pip install -r requirements.txt
+python main.py
+```
 
-# 4. Launch the app
+**Windows (CMD):**
+
+```cmd
+git clone https://github.com/bitgamergws1/TaskFlow-Pro.git
+cd TaskFlow-Pro
+python -m venv venv
+venv\Scripts\activate.bat
+pip install -r requirements.txt
+python main.py
+```
+
+**Windows (PowerShell):**
+
+```powershell
+git clone https://github.com/bitgamergws1/TaskFlow-Pro.git
+cd TaskFlow-Pro
+python -m venv venv
+venv\Scripts\Activate.ps1
+pip install -r requirements.txt
 python main.py
 ```
 
@@ -351,7 +389,7 @@ All AI calls route through the DevNest proxy, which:
 - [x] Streak tracking with 🔥 badge
 - [x] Pomodoro focus timer with live Rich countdown display
 - [x] Markdown report export
-- [x] One-command `run.sh` setup and launch script
+- [x] One-command setup scripts — `run.sh` (Linux/macOS) + `run.bat` (Windows)
 - [x] Evaluation time-bomb — app auto-locks after **20 May 2026**
 
 ---
@@ -384,7 +422,8 @@ taskflow-pro/
 ├── database.py             ← SQLite CRUD + background Supabase sync thread
 ├── ai_gateway.py           ← Multi-model AI routing via the DevNest proxy
 ├── requirements.txt        ← Python dependencies
-├── run.sh                  ← One-command setup + launch script
+├── run.sh                  ← One-command setup + launch (Linux / macOS)
+├── run.bat                 ← One-command setup + launch (Windows)
 ├── supabase_setup.sql      ← Run once in Supabase SQL Editor
 ├── tasks.db                ← SQLite database (auto-created, git-ignored)
 └── README.md
