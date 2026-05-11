@@ -372,6 +372,139 @@ def search(query):
     console.print(f"[dim]{len(tasks)} result(s)[/dim]")
 
 
+# ── chat ──────────────────────────────────────────────────────────────────────
+
+@cli.command()
+def chat():
+    """Hybrid AI chat — create, search, edit tasks through natural conversation."""
+    ctrl    = _get_ctrl()
+    history = []   # [{role, content}, ...]
+
+    console.print(Panel(
+        "[bold cyan]🤖 TaskFlow AI Chat[/bold cyan]\n\n"
+        "[white]Talk naturally to manage your tasks.[/white]\n"
+        "[dim]Examples:[/dim]\n"
+        "[dim]  • \"Add a Math assignment due Friday, High priority\"\n"
+        "  • \"Show my pending Work tasks\"\n"
+        "  • \"Edit task A3B2 — change priority to High\"\n"
+        "  • \"Mark A3B2 as done\"\n"
+        "  • \"What's my productivity today?\"[/dim]\n\n"
+        "[dim]Type [bold]exit[/bold] or [bold]quit[/bold] to leave.[/dim]",
+        border_style="cyan",
+        title="[bold]Chat Mode[/bold]",
+    ))
+    console.print()
+
+    while True:
+        # ── User input ─────────────────────────────────────────────────────
+        try:
+            user_input = Prompt.ask("[bold cyan]You[/bold cyan]").strip()
+        except (KeyboardInterrupt, EOFError):
+            console.print("\n[dim]Chat ended.[/dim]")
+            break
+
+        if not user_input:
+            continue
+        if user_input.lower() in ("exit", "quit", "bye", "q"):
+            console.print("[dim]Later. Go get things done. 💪[/dim]")
+            break
+
+        # ── Call AI ────────────────────────────────────────────────────────
+        with console.status("[cyan]AI is thinking...[/cyan]", spinner="dots"):
+            reply, action, err = ctrl.chat(user_input, history=history)
+
+        if err:
+            console.print(f"[red]AI error:[/red] {err}")
+            continue
+
+        # ── Print AI reply ─────────────────────────────────────────────────
+        if reply:
+            console.print(Panel(
+                f"[italic yellow]{reply}[/italic yellow]",
+                title="[bold cyan]🤖 TaskFlow AI[/bold cyan]",
+                border_style="cyan",
+                padding=(0, 2),
+            ))
+
+        # ── Update conversation history ────────────────────────────────────
+        history.append({"role": "user",      "content": user_input})
+        history.append({"role": "assistant", "content": reply or ""})
+        if len(history) > 20:
+            history = history[-20:]
+
+        # ── Execute action if AI triggered one ─────────────────────────────
+        if not action:
+            console.print()
+            continue
+
+        result_type, result_data, action_err = ctrl.handle_chat_action(action)
+
+        if action_err:
+            console.print(f"[red]Action failed:[/red] {action_err}\n")
+            continue
+
+        # ── Render action result ────────────────────────────────────────────
+        if result_type == "task_created":
+            t = result_data
+            console.print(Panel(
+                f"[green]✅ Task created![/green]\n\n"
+                f"  ID       : [bold white]{t['id']}[/bold white]\n"
+                f"  Name     : [white]{t['name']}[/white]\n"
+                f"  Priority : [{PRIORITY_COLOR.get(t['priority'],'white')}]{t['priority']}[/{PRIORITY_COLOR.get(t['priority'],'white')}]\n"
+                f"  Category : [blue]{t['category']}[/blue]\n"
+                f"  Due      : [cyan]{t.get('due_date') or '—'}[/cyan]",
+                border_style="green",
+                padding=(0, 2),
+            ))
+
+        elif result_type in ("task_list",):
+            tasks = result_data
+            if not tasks:
+                console.print("[yellow]  No tasks found.[/yellow]")
+            else:
+                from main import _task_table  # reuse existing helper
+                table = _task_table(tasks, f"Results ({len(tasks)})")
+                if table:
+                    console.print(table)
+
+        elif result_type == "task_edited":
+            t = result_data
+            console.print(Panel(
+                f"[green]✏️  Task updated![/green]\n\n"
+                f"  ID       : [bold white]{t['id']}[/bold white]\n"
+                f"  Name     : [white]{t['name']}[/white]\n"
+                f"  Priority : [{PRIORITY_COLOR.get(t['priority'],'white')}]{t['priority']}[/{PRIORITY_COLOR.get(t['priority'],'white')}]\n"
+                f"  Category : [blue]{t['category']}[/blue]\n"
+                f"  Due      : [cyan]{t.get('due_date') or '—'}[/cyan]",
+                border_style="green",
+                padding=(0, 2),
+            ))
+
+        elif result_type == "task_completed":
+            t = result_data
+            console.print(f"  [bold green]✅ {t['name']} ([white]{t['id']}[/white]) marked as completed![/bold green]")
+
+        elif result_type == "task_deleted":
+            console.print(f"  [yellow]🗑  Task [white]{result_data['id']}[/white] moved to recycle bin.[/yellow]")
+
+        elif result_type == "analytics":
+            s = result_data
+            pc = "green" if s["productivity"] >= 70 else "yellow" if s["productivity"] >= 40 else "red"
+            console.print(Panel(
+                f"  Total       [white]{s['total']}[/white]\n"
+                f"  Completed   [green]{s['completed']}[/green]\n"
+                f"  Pending     [yellow]{s['pending']}[/yellow]\n"
+                f"  Overdue     [red]{s['overdue']}[/red]\n"
+                f"  Productivity[{pc}]{s['productivity']}%[/{pc}]\n"
+                f"  Streak      [magenta]{s['streak']} 🔥[/magenta]",
+                title="[bold cyan]📊 Analytics[/bold cyan]",
+                border_style="cyan",
+                padding=(0, 2),
+            ))
+
+        console.print()
+
+
 # ── optimize ──────────────────────────────────────────────────────────────────
 
 @cli.command()
