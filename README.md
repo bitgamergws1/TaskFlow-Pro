@@ -50,6 +50,8 @@ The app is designed to require **no secrets on the client machine**. You clone i
 | `supabase_setup.sql` | Run once in Supabase SQL Editor to set up cloud sync |
 | `run.sh` | One-command setup and launch — Linux / macOS |
 | `run.bat` | One-command setup and launch — Windows |
+| `taskflow` | Short command wrapper — Linux / macOS (`taskflow add`, `taskflow list`, ...) |
+| `taskflow.bat` | Short command wrapper — Windows CMD |
 
 ---
 
@@ -193,37 +195,56 @@ That's it. Every task write from the CLI (add / complete / delete / restore) wil
 
 ## Commands Reference
 
+### Running Commands
+
+The project includes a `taskflow` shortcut wrapper so you don't have to type `python main.py` every time.
+
+**Linux / macOS** — run once to enable the shortcut:
+```bash
+chmod +x taskflow
+```
+Then use `taskflow <command>` everywhere below.
+
+**Windows (CMD)** — `taskflow.bat` is already included, just use:
+```cmd
+taskflow <command>
+```
+
+> Both `taskflow` and `python main.py` are identical — use whichever you prefer.
+
+---
+
 ### Core Task Management
 
-```bash
-python main.py                        # Show dashboard + AI daily boost/roast
-python main.py add                    # Add a task interactively (prompts for all fields)
-python main.py add --ai               # Parse a task from natural language via AI
-python main.py list                   # List all active (non-deleted) tasks
-python main.py list --status pending  # Filter by status: pending | in-progress | done
-python main.py list --category Work   # Filter by category (e.g. Work, Study, Personal)
-python main.py list --priority High   # Filter by priority: High | Medium | Low
-python main.py complete <ID>          # Mark a task as completed ✅
-python main.py delete <ID>            # Soft-delete → moves task to recycle bin 🗑
-python main.py restore <ID>           # Restore a task from the recycle bin
-python main.py bin                    # View all soft-deleted tasks in the recycle bin
-python main.py edit <ID>              # Interactively edit any field of an existing task
-python main.py search "keyword"       # Full-text search across name, notes, and category
+```
+taskflow                              → Show dashboard + AI daily boost/roast
+taskflow add                          → Add a task interactively (prompts for all fields)
+taskflow add --ai                     → Parse a task from natural language via AI
+taskflow list                         → List all active (non-deleted) tasks
+taskflow list --status pending        → Filter by status: pending | completed
+taskflow list --category Work         → Filter by category (Work, Study, Personal, ...)
+taskflow list --priority High         → Filter by priority: High | Medium | Low
+taskflow complete <ID>                → Mark a task as completed ✅
+taskflow delete <ID>                  → Soft-delete → moves task to recycle bin 🗑
+taskflow restore <ID>                 → Restore a task from the recycle bin
+taskflow bin                          → View all soft-deleted tasks in the recycle bin
+taskflow edit <ID>                    → Interactively edit any field of an existing task
+taskflow search "keyword"             → Full-text search across name, notes, and category
 ```
 
 ### AI-Powered Commands
 
-```bash
-python main.py optimize               # Generate a full AI time-blocked schedule
-python main.py focus <ID>             # Start a 25-minute Pomodoro focus timer for a task
-python main.py focus <ID> --minutes 50  # Custom Pomodoro duration (any duration in minutes)
+```
+taskflow optimize                     → Generate a full AI time-blocked daily schedule
+taskflow focus <ID>                   → Start a 25-minute Pomodoro focus timer
+taskflow focus <ID> --minutes 50      → Custom Pomodoro duration
 ```
 
 ### Reporting & Analytics
 
-```bash
-python main.py analytics              # Full productivity analytics + ASCII bar charts
-python main.py export                 # Export a Markdown report of all tasks and stats
+```
+taskflow analytics                    → Full productivity analytics + ASCII bar charts
+taskflow export                       → Export a Markdown report of all tasks and stats
 ```
 
 ---
@@ -424,6 +445,8 @@ taskflow-pro/
 ├── requirements.txt        ← Python dependencies
 ├── run.sh                  ← One-command setup + launch (Linux / macOS)
 ├── run.bat                 ← One-command setup + launch (Windows)
+├── taskflow                ← Short command wrapper (Linux / macOS)
+├── taskflow.bat            ← Short command wrapper (Windows CMD)
 ├── supabase_setup.sql      ← Run once in Supabase SQL Editor
 ├── tasks.db                ← SQLite database (auto-created, git-ignored)
 └── README.md
@@ -443,14 +466,14 @@ taskflow-pro/
 
 ### Demo Script (suggested order)
 
-```bash
-python main.py                         # 1. Show the dashboard + AI roast
-python main.py add --ai                # 2. Add a task via natural language
-python main.py list                    # 3. Show task list
-python main.py optimize                # 4. Generate AI schedule
-python main.py focus <ID>              # 5. Start Pomodoro timer (show the live countdown)
-python main.py analytics               # 6. Show ASCII charts
-python main.py export                  # 7. Export Markdown report
+```cmd
+taskflow                               # 1. Show the dashboard + AI roast
+taskflow add --ai                      # 2. Add a task via natural language
+taskflow list                          # 3. Show task list
+taskflow optimize                      # 4. Generate AI schedule
+taskflow focus <ID>                    # 5. Start Pomodoro timer (show live countdown)
+taskflow analytics                     # 6. Show ASCII charts
+taskflow export                        # 7. Export Markdown report
 ```
 
 ---
