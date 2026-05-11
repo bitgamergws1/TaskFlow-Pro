@@ -31,8 +31,8 @@ TaskFlow Pro is a fully offline-capable, AI-augmented terminal task manager buil
 - A **Rich-powered** cyberpunk CLI dashboard for a beautiful terminal experience
 - **SQLite** as the primary database — zero latency, works with no internet
 - **Supabase** for background cloud sync — your tasks follow you across devices
-- **Claude (Anthropic)** for natural-language task parsing
-- **Deepshi R2** for AI schedule optimization and personalized daily motivation
+- **AI** for natural-language task parsing
+- **AI** for schedule optimization and personalized daily motivation
 - A **Render-hosted proxy server** that keeps all API keys off your machine entirely
 
 The app is designed to require **no secrets on the client machine**. You clone it, run one script, and you're live.
@@ -46,7 +46,7 @@ The app is designed to require **no secrets on the client machine**. You clone i
 | `main.py` | CLI entry point — all commands, Rich UI, Pomodoro timer |
 | `controller.py` | Logic bridge between database and AI |
 | `database.py` | SQLite engine + background Supabase sync |
-| `ai_gateway.py` | Multi-model AI routing (Claude + Deepshi R2) |
+| `ai_gateway.py` | Multi-model AI routing via the DevNest proxy |
 | `supabase_setup.sql` | Run once in Supabase SQL Editor to set up cloud sync |
 | `run.sh` | One-command setup and launch script |
 
@@ -75,7 +75,7 @@ The `run.sh` script automatically:
 3. **Installs** all dependencies from `requirements.txt`
 4. **Launches** the TaskFlow Pro dashboard
 
-On first launch you'll see the Rich dashboard with a live AI motivation/roast message from Deepshi R2. All tasks are stored locally in `tasks.db` — cloud sync happens silently in the background.
+On first launch you'll see the Rich dashboard with a live AI motivation/roast message. All tasks are stored locally in `tasks.db` — cloud sync happens silently in the background.
 
 ---
 
@@ -107,7 +107,7 @@ python main.py
 
 **There is no `.env` file.** The app requires zero configuration on your machine.
 
-All API keys (Claude, Deepshi R2), the Supabase URL, and the Supabase anon key live exclusively on the **DevNest Render proxy server**. They are hardcoded server-side and never transmitted to the client.
+All API keys, the Supabase URL, and the Supabase anon key live exclusively on the **DevNest Render proxy server**. They are hardcoded server-side and never transmitted to the client.
 
 The only thing `database.py` needs to run is a writable directory for `tasks.db` — which defaults to the project folder automatically:
 
@@ -160,7 +160,7 @@ That's it. Every task write from the CLI (add / complete / delete / restore) wil
 ```bash
 python main.py                        # Show dashboard + AI daily boost/roast
 python main.py add                    # Add a task interactively (prompts for all fields)
-python main.py add --ai               # Parse a task from natural language via Claude
+python main.py add --ai               # Parse a task from natural language via AI
 python main.py list                   # List all active (non-deleted) tasks
 python main.py list --status pending  # Filter by status: pending | in-progress | done
 python main.py list --category Work   # Filter by category (e.g. Work, Study, Personal)
@@ -176,7 +176,7 @@ python main.py search "keyword"       # Full-text search across name, notes, and
 ### AI-Powered Commands
 
 ```bash
-python main.py optimize               # Generate a full AI time-blocked schedule (Deepshi R2)
+python main.py optimize               # Generate a full AI time-blocked schedule
 python main.py focus <ID>             # Start a 25-minute Pomodoro focus timer for a task
 python main.py focus <ID> --minutes 50  # Custom Pomodoro duration (any duration in minutes)
 ```
@@ -192,7 +192,7 @@ python main.py export                 # Export a Markdown report of all tasks an
 
 ## AI Features
 
-### Natural Language Task Parsing (Claude)
+### Natural Language Task Parsing
 
 Instead of filling in every field manually, just describe your task in plain English — or even Hinglish:
 
@@ -215,17 +215,17 @@ Kal subah tak law ka revision karna hai, priority high hai
 }
 ```
 
-Claude extracts task name, priority, due date, and category from any natural language description. You confirm before saving.
+The AI extracts task name, priority, due date, and category from any natural language description. You confirm before saving.
 
 ---
 
-### AI Schedule Optimizer (Deepshi R2)
+### AI Schedule Optimizer
 
 ```bash
 python main.py optimize
 ```
 
-Sends all your pending tasks to **Deepshi R2**, which returns a complete, time-blocked daily schedule including:
+Sends all your pending tasks to the AI, which returns a complete, time-blocked daily schedule including:
 
 - **Priority ordering** — urgent/important tasks scheduled first
 - **Pomodoro blocks** — each task slotted into focused 25-min work blocks
@@ -238,7 +238,7 @@ The schedule is rendered as a Rich table directly in your terminal.
 
 ### Daily Motivation / Roast
 
-Every time you open the dashboard (`python main.py`), **Deepshi R2** generates a personalized message based on your recent productivity data:
+Every time you open the dashboard (`python main.py`), the **AI** generates a personalized message based on your recent productivity data:
 
 - **Low productivity** → you get roasted 🔥
 - **High productivity** → you get fired-up motivation 💪
@@ -263,9 +263,9 @@ The message is fetched asynchronously so it doesn't delay the dashboard load.
      ┌────────────▼──┐  ┌──▼──────────────────┐
      │  database.py  │  │    ai_gateway.py     │
      │               │  │                      │
-     │  SQLite ───── │  │  Claude  (parsing)   │
-     │  (primary,    │  │  Deepshi (optimize   │
-     │   0ms, local) │  │          + motivation│
+     │  SQLite ───── │  │  AI  (parsing)       │
+     │  (primary,    │  │  AI  (optimize       │
+     │   0ms, local) │  │       + motivation)  │
      │               │  └──────────┬───────────┘
      │  Supabase ◄── │             │
      │  (background  │     DevNest Proxy Server
@@ -276,25 +276,18 @@ The message is fetched asynchronously so it doesn't delay the dashboard load.
 **Proxy URL:** `https://devnest-proxy-server.onrender.com`
 
 All AI calls route through the DevNest proxy, which:
-- Holds all API keys server-side (Claude, Deepshi, Supabase) — zero secrets on client
+- Holds all API keys server-side — zero secrets on client
 - Verifies request integrity via HMAC signatures on every call
 - Routes to the correct model based on the request type
-- Returns responses in a unified format regardless of backend model
+- Returns responses in a unified format regardless of backend
 
 **Proxy routes used by this app:**
 
 | Route | Used for |
 |---|---|
-| `POST /v1/proxy/ai` | All AI calls — auto-routes to Deepshi R2 or Claude based on `model` field |
+| `POST /v1/proxy/ai` | All AI calls — auto-routes to the appropriate model |
 | `POST /v1/proxy/sync` | Task upsert to Supabase after every local write |
 | `GET  /health` | Liveness check + eval-window status |
-
-**Available models via proxy:**
-
-| Family | Models |
-|---|---|
-| Deepshi | `deepshi-r2`, `deepshi-r1`, `deepshi-banana`, `deepshi-banana-pro` |
-| Talkai | `claude-haiku-4-5-20251001`, `gpt-4.1-nano`, `deepseek-chat`, `gemini-2.0-flash-lite` |
 
 ---
 
@@ -349,8 +342,8 @@ All AI calls route through the DevNest proxy, which:
 - [x] Search tasks by keyword (name, notes, category)
 - [x] Filter tasks by status, priority, or category
 - [x] Category-based task organization
-- [x] AI natural language task parsing via Claude
-- [x] AI full-day schedule optimizer via Deepshi R2
+- [x] AI natural language task parsing
+- [x] AI full-day schedule optimizer
 - [x] AI daily motivation / productivity roast on dashboard open
 - [x] Background Supabase cloud sync (non-blocking, zero client secrets)
 - [x] Soft delete with fully functional recycle bin + restore
@@ -389,7 +382,7 @@ taskflow-pro/
 ├── main.py                 ← CLI entry point (Rich UI, Click commands, Pomodoro)
 ├── controller.py           ← Business logic + AI orchestration
 ├── database.py             ← SQLite CRUD + background Supabase sync thread
-├── ai_gateway.py           ← Multi-model routing (Claude + Deepshi via proxy)
+├── ai_gateway.py           ← Multi-model AI routing via the DevNest proxy
 ├── requirements.txt        ← Python dependencies
 ├── run.sh                  ← One-command setup + launch script
 ├── supabase_setup.sql      ← Run once in Supabase SQL Editor
