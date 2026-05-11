@@ -84,6 +84,101 @@ class TaskController:
     def get_analytics(self):
         return self.db.get_analytics()
 
+    # ── AI Chat Action Dispatcher ─────────────────────────────────────────────
+
+    def chat(self, user_message, history=None):
+        """Send message to AI chat. Returns (reply, action, error)."""
+        return self.ai.chat(user_message, history=history)
+
+    def handle_chat_action(self, action_dict):
+        """
+        Execute a structured action returned by the AI chat.
+        Returns (result_type, result_data, error_message)
+
+        result_type: "task_created" | "task_list" | "task_edited" |
+                     "task_completed" | "task_deleted" | "analytics" | "error"
+        """
+        if not action_dict:
+            return "error", None, "No action provided."
+
+        action = action_dict.get("action", "")
+        data   = action_dict.get("data", {})
+
+        # ── create_task ───────────────────────────────────────────────────────
+        if action == "create_task":
+            name = data.get("name", "").strip()
+            if not name:
+                return "error", None, "Task name is required."
+            task_id = self.db.add_task(
+                name=name,
+                category=data.get("category", "General"),
+                priority=data.get("priority", "Medium"),
+                due_date=data.get("due_date"),
+                notes=data.get("notes"),
+            )
+            task, _ = self.get_task(task_id)
+            return "task_created", task, None
+
+        # ── search_tasks ──────────────────────────────────────────────────────
+        elif action == "search_tasks":
+            query = data.get("query", "").strip()
+            tasks = self.db.get_tasks(search=query)
+            return "task_list", tasks, None
+
+        # ── list_tasks ────────────────────────────────────────────────────────
+        elif action == "list_tasks":
+            tasks = self.db.get_tasks(
+                status=data.get("status"),
+                category=data.get("category"),
+            )
+            priority_filter = data.get("priority")
+            if priority_filter:
+                tasks = [t for t in tasks if t["priority"] == priority_filter]
+            return "task_list", tasks, None
+
+        # ── edit_task ─────────────────────────────────────────────────────────
+        elif action == "edit_task":
+            task_id = str(data.get("task_id", "")).upper().strip()
+            updates = data.get("updates", {})
+            if not task_id:
+                return "error", None, "Task ID is required to edit."
+            if not updates:
+                return "error", None, "No fields to update."
+            ok, err = self.edit_task(task_id, **updates)
+            if not ok:
+                return "error", None, err
+            task, _ = self.get_task(task_id)
+            return "task_edited", task, None
+
+        # ── complete_task ─────────────────────────────────────────────────────
+        elif action == "complete_task":
+            task_id = str(data.get("task_id", "")).upper().strip()
+            if not task_id:
+                return "error", None, "Task ID is required."
+            ok, err = self.complete_task(task_id)
+            if not ok:
+                return "error", None, err
+            task, _ = self.get_task(task_id)
+            return "task_completed", task, None
+
+        # ── delete_task ───────────────────────────────────────────────────────
+        elif action == "delete_task":
+            task_id = str(data.get("task_id", "")).upper().strip()
+            if not task_id:
+                return "error", None, "Task ID is required."
+            ok, err = self.delete_task(task_id)
+            if not ok:
+                return "error", None, err
+            return "task_deleted", {"id": task_id}, None
+
+        # ── show_analytics ────────────────────────────────────────────────────
+        elif action == "show_analytics":
+            stats = self.get_analytics()
+            return "analytics", stats, None
+
+        else:
+            return "error", None, f"Unknown action: '{action}'"
+
     # ── AI Features ───────────────────────────────────────────────────────────
 
     def optimize_schedule(self):
