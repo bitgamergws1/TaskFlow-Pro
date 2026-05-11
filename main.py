@@ -9,7 +9,6 @@ import os
 from datetime import date, datetime
 
 import click
-from dotenv import load_dotenv
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
@@ -19,8 +18,6 @@ from rich.live import Live
 from rich.columns import Columns
 from rich.align import Align
 from rich import box
-
-load_dotenv()
 
 EXPIRY = date(2026, 5, 20)
 console = Console()
@@ -165,10 +162,14 @@ def _show_dashboard():
 
     # Daily motivation
     console.print()
-    with console.status("[cyan]Getting your daily boost from Deepshi...[/cyan]", spinner="dots"):
+    with console.status("[cyan]Getting your daily AI boost...[/cyan]", spinner="dots"):
         msg, err = ctrl.get_motivation()
     if msg:
-        console.print(Panel(f"[italic yellow]{msg}[/italic yellow]", title="[bold cyan]🤖 Deepshi Says[/bold cyan]", border_style="cyan"))
+        console.print(Panel(
+            f"[italic yellow]{msg}[/italic yellow]",
+            title="[bold cyan]🤖 TaskFlow AI[/bold cyan]",
+            border_style="cyan",
+        ))
     console.print()
     console.print("[dim]Commands: add | list | complete | delete | optimize | focus | analytics | export | bin[/dim]")
 
@@ -176,14 +177,14 @@ def _show_dashboard():
 # ── add ───────────────────────────────────────────────────────────────────────
 
 @cli.command()
-@click.option("--ai", "use_ai", is_flag=True, help="Parse task using Claude AI")
+@click.option("--ai", "use_ai", is_flag=True, help="Parse task using AI")
 def add(use_ai):
     """Add a new task (manual or AI-powered)."""
     ctrl = _get_ctrl()
 
     if use_ai:
         text = Prompt.ask("[cyan]Describe your task in natural language[/cyan]")
-        with console.status("[cyan]Claude is parsing your task...[/cyan]", spinner="dots"):
+        with console.status("[cyan]AI is parsing your task...[/cyan]", spinner="dots"):
             task_id, parsed, err = ctrl.add_ai(text)
         if err:
             console.print(f"[red]AI Error:[/red] {err}")
@@ -375,14 +376,14 @@ def search(query):
 
 @cli.command()
 def optimize():
-    """AI-powered full-day schedule optimizer (Deepshi R2)."""
+    """AI-powered full-day schedule optimizer."""
     ctrl = _get_ctrl()
     console.print(Panel(
-        "[cyan]Sending your tasks to Deepshi R2 for analysis...[/cyan]\n"
+        "[cyan]Sending your tasks to AI for analysis...[/cyan]\n"
         "[dim]This may take 20-40 seconds.[/dim]",
         border_style="cyan",
     ))
-    with console.status("[cyan]🧠 Deepshi is building your schedule...[/cyan]", spinner="aesthetic"):
+    with console.status("[cyan]🧠 AI is building your schedule...[/cyan]", spinner="aesthetic"):
         schedule, err = ctrl.optimize_schedule()
 
     if err:
@@ -478,7 +479,6 @@ def analytics():
         border_style="cyan",
     ))
 
-    # Summary numbers
     prod_color = "green" if stats["productivity"] >= 70 else "yellow" if stats["productivity"] >= 40 else "red"
     console.print(f"""
   [bold]Overview[/bold]
@@ -491,22 +491,13 @@ def analytics():
   Day streak      : [magenta]{stats['streak']} 🔥[/magenta]
 """)
 
-    # Completed vs Pending chart
     _bar_chart(
         {"Completed": stats["completed"], "Pending": stats["pending"], "Overdue": stats["overdue"]},
         "Status Breakdown",
         color="cyan",
     )
-
-    # Priority chart
     if stats["by_priority"]:
-        priority_colored = {}
-        for p, v in stats["by_priority"].items():
-            c = {"High": "red", "Medium": "yellow", "Low": "green"}.get(p, "white")
-            priority_colored[p] = v
         _bar_chart(stats["by_priority"], "By Priority", color="magenta")
-
-    # Category chart
     if stats["by_category"]:
         _bar_chart(stats["by_category"], "By Category", color="blue")
 
