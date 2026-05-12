@@ -331,4 +331,5 @@ class AIGateway:
             f"{stats.get('overdue')} overdue, {p}% rate, {stats.get('streak')}-day streak.\n"
             f"Direct, witty, specific. No filler. End with one punchy line."
         )
-        return self._call(DEEPSHI, prompt, timeout=60)
+        # Claude Haiku — fast (3-5s), no thinking overhead needed for motivation
+        return self._call(CLAUDE, prompt, timeout=30)
