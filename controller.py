@@ -1,5 +1,5 @@
 """
-controller.py — Logic Bridge: Database ↔ AI Gateway
+controller.py — Logic Bridge: Database <-> AI Gateway
 """
 
 from datetime import date
@@ -48,9 +48,9 @@ class TaskController:
         if err:
             return False, err
         if task["is_deleted"]:
-            return False, "Task is in recycle bin. Restore it first."
+            return False, "Task is in recycle bin."
         if task["status"] == "completed":
-            return False, "Task already marked as completed."
+            return False, "Already completed."
         self.db.complete_task(task_id)
         return True, None
 
@@ -59,7 +59,7 @@ class TaskController:
         if err:
             return False, err
         if task["is_deleted"]:
-            return False, "Task already in recycle bin."
+            return False, "Already in recycle bin."
         self.db.soft_delete(task_id)
         return True, None
 
@@ -84,100 +84,114 @@ class TaskController:
     def get_analytics(self):
         return self.db.get_analytics()
 
-    # ── AI Chat Action Dispatcher ─────────────────────────────────────────────
+    # ── AI Chat ───────────────────────────────────────────────────────────────
 
-    def chat(self, user_message, history=None):
-        """Send message to AI chat. Returns (reply, action, error)."""
-        return self.ai.chat(user_message, history=history)
+    def chat(self, user_message: str, history=None, draft: dict = None):
+        """Returns (reply, action, error)."""
+        return self.ai.chat(user_message, history=history, draft=draft)
 
-    def handle_chat_action(self, action_dict):
+    def handle_chat_action(self, action_dict: dict, current_draft: dict = None):
         """
-        Execute a structured action returned by the AI chat.
-        Returns (result_type, result_data, error_message)
+        Dispatch a structured action from the AI.
+        Returns (result_type, result_data, error, new_draft)
 
-        result_type: "task_created" | "task_list" | "task_edited" |
-                     "task_completed" | "task_deleted" | "analytics" | "error"
+        result_type values:
+            draft_updated | confirm_preview | task_created | task_list |
+            task_edited   | task_completed  | task_deleted | analytics |
+            draft_cleared | error
         """
         if not action_dict:
-            return "error", None, "No action provided."
+            return "error", None, "No action.", current_draft
 
         action = action_dict.get("action", "")
         data   = action_dict.get("data", {})
+        draft  = dict(current_draft or {})
+
+        # ── update_draft ──────────────────────────────────────────────────────
+        if action == "update_draft":
+            draft.update({k: v for k, v in data.items() if v})
+            return "draft_updated", draft, None, draft
+
+        # ── clear_draft ───────────────────────────────────────────────────────
+        elif action == "clear_draft":
+            return "draft_cleared", {}, None, {}
+
+        # ── confirm_task (preview before save) ────────────────────────────────
+        elif action == "confirm_task":
+            # Merge current draft with what AI suggests
+            preview = {**draft, **{k: v for k, v in data.items() if v}}
+            preview.setdefault("priority", "Medium")
+            preview.setdefault("category", "General")
+            return "confirm_preview", preview, None, draft
 
         # ── create_task ───────────────────────────────────────────────────────
-        if action == "create_task":
-            name = data.get("name", "").strip()
+        elif action == "create_task":
+            merged = {**draft, **{k: v for k, v in data.items() if v}}
+            name   = merged.get("name", "").strip()
             if not name:
-                return "error", None, "Task name is required."
+                return "error", None, "Task name is required.", draft
             task_id = self.db.add_task(
                 name=name,
-                category=data.get("category", "General"),
-                priority=data.get("priority", "Medium"),
-                due_date=data.get("due_date"),
-                notes=data.get("notes"),
+                category=merged.get("category", "General"),
+                priority=merged.get("priority", "Medium"),
+                due_date=merged.get("due_date"),
+                notes=merged.get("notes"),
             )
             task, _ = self.get_task(task_id)
-            return "task_created", task, None
+            return "task_created", task, None, {}   # clear draft on success
 
         # ── search_tasks ──────────────────────────────────────────────────────
         elif action == "search_tasks":
-            query = data.get("query", "").strip()
-            tasks = self.db.get_tasks(search=query)
-            return "task_list", tasks, None
+            tasks = self.db.get_tasks(search=data.get("query", ""))
+            return "task_list", tasks, None, draft
 
         # ── list_tasks ────────────────────────────────────────────────────────
         elif action == "list_tasks":
-            tasks = self.db.get_tasks(
-                status=data.get("status"),
-                category=data.get("category"),
-            )
-            priority_filter = data.get("priority")
-            if priority_filter:
-                tasks = [t for t in tasks if t["priority"] == priority_filter]
-            return "task_list", tasks, None
+            tasks = self.db.get_tasks(status=data.get("status"), category=data.get("category"))
+            pf    = data.get("priority")
+            if pf:
+                tasks = [t for t in tasks if t["priority"] == pf]
+            return "task_list", tasks, None, draft
 
         # ── edit_task ─────────────────────────────────────────────────────────
         elif action == "edit_task":
-            task_id = str(data.get("task_id", "")).upper().strip()
-            updates = data.get("updates", {})
-            if not task_id:
-                return "error", None, "Task ID is required to edit."
-            if not updates:
-                return "error", None, "No fields to update."
-            ok, err = self.edit_task(task_id, **updates)
+            tid = str(data.get("task_id", "")).upper().strip()
+            upd = data.get("updates", {})
+            if not tid:
+                return "error", None, "Task ID required.", draft
+            ok, err = self.edit_task(tid, **upd)
             if not ok:
-                return "error", None, err
-            task, _ = self.get_task(task_id)
-            return "task_edited", task, None
+                return "error", None, err, draft
+            task, _ = self.get_task(tid)
+            return "task_edited", task, None, draft
 
         # ── complete_task ─────────────────────────────────────────────────────
         elif action == "complete_task":
-            task_id = str(data.get("task_id", "")).upper().strip()
-            if not task_id:
-                return "error", None, "Task ID is required."
-            ok, err = self.complete_task(task_id)
+            tid = str(data.get("task_id", "")).upper().strip()
+            if not tid:
+                return "error", None, "Task ID required.", draft
+            ok, err = self.complete_task(tid)
             if not ok:
-                return "error", None, err
-            task, _ = self.get_task(task_id)
-            return "task_completed", task, None
+                return "error", None, err, draft
+            task, _ = self.get_task(tid)
+            return "task_completed", task, None, draft
 
         # ── delete_task ───────────────────────────────────────────────────────
         elif action == "delete_task":
-            task_id = str(data.get("task_id", "")).upper().strip()
-            if not task_id:
-                return "error", None, "Task ID is required."
-            ok, err = self.delete_task(task_id)
+            tid = str(data.get("task_id", "")).upper().strip()
+            if not tid:
+                return "error", None, "Task ID required.", draft
+            ok, err = self.delete_task(tid)
             if not ok:
-                return "error", None, err
-            return "task_deleted", {"id": task_id}, None
+                return "error", None, err, draft
+            return "task_deleted", {"id": tid}, None, draft
 
         # ── show_analytics ────────────────────────────────────────────────────
         elif action == "show_analytics":
-            stats = self.get_analytics()
-            return "analytics", stats, None
+            return "analytics", self.get_analytics(), None, draft
 
         else:
-            return "error", None, f"Unknown action: '{action}'"
+            return "error", None, f"Unknown action: '{action}'", draft
 
     # ── AI Features ───────────────────────────────────────────────────────────
 
@@ -188,8 +202,7 @@ class TaskController:
         return self.ai.optimize_schedule(pending)
 
     def get_motivation(self):
-        stats = self.db.get_analytics()
-        return self.ai.get_motivation(stats)
+        return self.ai.get_motivation(self.db.get_analytics())
 
     # ── Export ────────────────────────────────────────────────────────────────
 
@@ -197,36 +210,30 @@ class TaskController:
         tasks = self.db.get_tasks()
         stats = self.db.get_analytics()
         today = date.today().isoformat()
-
         lines = [
-            "# TaskFlow Pro — Daily Report",
-            f"**Generated:** {today}",
-            "",
+            "# TaskFlow Pro -- Daily Report",
+            f"**Generated:** {today}", "",
             "## Summary",
-            f"| Metric | Value |",
-            f"|--------|-------|",
-            f"| Total Tasks | {stats['total']} |",
+            "| Metric | Value |", "|--------|-------|",
+            f"| Total       | {stats['total']} |",
             f"| Completed   | {stats['completed']} |",
             f"| Pending     | {stats['pending']} |",
             f"| Overdue     | {stats['overdue']} |",
             f"| Productivity| {stats['productivity']}% |",
-            f"| Streak      | {stats['streak']} days 🔥 |",
-            "",
-            "## Task List",
+            f"| Streak      | {stats['streak']} days |",
+            "", "## Tasks",
         ]
-
         for t in tasks:
-            icon = "✅" if t["status"] == "completed" else "🔴" if self._is_overdue(t) else "⏳"
+            icon = "x" if t["status"] == "completed" else "!" if self._is_overdue(t) else " "
             lines.append(
-                f"- {icon} **{t['name']}** | `{t['priority']}` | {t.get('category','General')} | Due: {t.get('due_date') or '—'}"
+                f"- [{icon}] **{t['name']}** | {t['priority']} | {t.get('category','General')} | {t.get('due_date') or 'no date'}"
             )
             if t.get("notes"):
                 lines.append(f"  > {t['notes']}")
-
-        filename = f"report_{today}.md"
-        with open(filename, "w", encoding="utf-8") as f:
+        fn = f"report_{today}.md"
+        with open(fn, "w", encoding="utf-8") as f:
             f.write("\n".join(lines))
-        return filename
+        return fn
 
     def _is_overdue(self, task):
         if not task.get("due_date") or task["status"] == "completed":
