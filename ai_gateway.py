@@ -27,61 +27,80 @@ ACTION_TAG = "TASKFLOW_ACTION:"
 # ── Intent definitions ────────────────────────────────────────────────────────
 
 INTENTS = {
-    "create_task":   "User wants to add / create a new task",
-    "list_tasks":    "User wants to see, list, or view existing tasks",
-    "search_tasks":  "User wants to find / search a specific task by keyword",
-    "complete_task": "User wants to mark a task as done / complete",
-    "delete_task":   "User wants to delete or remove a task",
-    "edit_task":     "User wants to edit, update, or change a task",
-    "analytics":     "User wants stats, productivity info, or summary numbers",
-    "optimize":      "User wants a schedule, time plan, or optimization",
-    "chitchat":      "General conversation, greeting, or unrelated to tasks",
-    "unclear":       "Cannot determine intent clearly",
+    "create_task":      "User wants to add / create a new task",
+    "list_tasks":       "User wants to see, list, or view existing tasks",
+    "search_tasks":     "User wants to find / search a specific task by keyword",
+    "complete_task":    "User wants to mark a task as done / complete",
+    "delete_task":      "User wants to delete or remove a task",
+    "edit_task":        "User wants to edit, update, or change a task",
+    "analytics":        "User wants stats, productivity info, or summary numbers",
+    "optimize":         "User wants a schedule, time plan, or optimization",
+    "weather":          "User is asking about weather, temperature, rain, or climate",
+    "general_question": "User is asking a general knowledge or off-task question",
+    "chitchat":         "General conversation, greeting, or small talk",
+    "unclear":          "Cannot determine intent clearly",
 }
 
 # Which action names map to which intent
 INTENT_TO_ACTIONS = {
-    "create_task":   {"update_draft", "confirm_task", "create_task", "clear_draft"},
-    "list_tasks":    {"list_tasks"},
-    "search_tasks":  {"search_tasks"},
-    "complete_task": {"complete_task"},
-    "delete_task":   {"delete_task"},
-    "edit_task":     {"edit_task"},
-    "analytics":     {"show_analytics"},
-    "optimize":      set(),
-    "chitchat":      set(),
-    "unclear":       set(),
+    "create_task":      {"update_draft", "confirm_task", "create_task", "clear_draft"},
+    "list_tasks":       {"list_tasks"},
+    "search_tasks":     {"search_tasks"},
+    "complete_task":    {"complete_task"},
+    "delete_task":      {"delete_task"},
+    "edit_task":        {"edit_task"},
+    "analytics":        {"show_analytics"},
+    "optimize":         set(),
+    "weather":          set(),   # no task action — pure web search reply
+    "general_question": set(),
+    "chitchat":         set(),
+    "unclear":          set(),
 }
 
-# Human-readable loading messages per intent
+# Loading message shown while AI thinks
 INTENT_STATUS = {
-    "create_task":   "Building your task...",
-    "list_tasks":    "Fetching your tasks...",
-    "search_tasks":  "Searching tasks...",
-    "complete_task": "Updating task status...",
-    "delete_task":   "Processing deletion...",
-    "edit_task":     "Preparing task edit...",
-    "analytics":     "Crunching your numbers...",
-    "optimize":      "Optimizing your schedule...",
-    "chitchat":      "Thinking...",
-    "unclear":       "Processing your request...",
+    "create_task":      "Building your task...",
+    "list_tasks":       "Fetching your tasks...",
+    "search_tasks":     "Searching tasks...",
+    "complete_task":    "Updating task status...",
+    "delete_task":      "Processing deletion...",
+    "edit_task":        "Preparing task edit...",
+    "analytics":        "Crunching your numbers...",
+    "optimize":         "Optimizing your schedule...",
+    "weather":          "Checking the weather...",
+    "general_question": "Looking that up...",
+    "chitchat":         "Thinking...",
+    "unclear":          "Processing your request...",
 }
+
+# Intents that should trigger proxy web search
+WEB_SEARCH_INTENTS = {"weather", "general_question"}
+
+# Intents where task actions should be stripped from response
+NO_ACTION_INTENTS = {"weather", "general_question", "chitchat"}
+
+# ── Classify system prompt ────────────────────────────────────────────────────
 
 INTENT_CLASSIFY_SYSTEM = """You are an intent classifier for a task management app.
 
 Given a user message, return ONLY a JSON object — no markdown, no explanation:
-{"intent": "<one of the intents>", "entities": {"task_name": null, "task_id": null, "keyword": null}}
+{"intent": "<one of the intents>", "entities": {"task_name": null, "task_id": null, "keyword": null, "location": null}}
 
-Valid intents: create_task, list_tasks, search_tasks, complete_task, delete_task, edit_task, analytics, optimize, chitchat, unclear
+Valid intents: create_task, list_tasks, search_tasks, complete_task, delete_task, edit_task, analytics, optimize, weather, general_question, chitchat, unclear
 
-Rules:
-- If user mentions a task ID (like A1B2C3), extract it in task_id
-- If user wants to see/show/list tasks → list_tasks
-- If user asks "which task" or "what task" or "show me that task" → list_tasks or search_tasks
-- Stats/productivity/rate/streak → analytics
-- General greetings or off-topic → chitchat
+Classification rules:
+- weather / mausam / barish / garmi / sardi / temperature / baarish / thand → weather
+- If user mentions a task ID like A1B2C3 → extract in task_id
+- See/show/list/dikhao tasks → list_tasks
+- Which task / kaunsa task / task detail → list_tasks or search_tasks
+- Stats/productivity/rate/streak/analytics → analytics
+- General knowledge not about tasks → general_question
+- Greetings / hi / hello / kya haal / how are you → chitchat
 - When unsure → unclear
+- For weather queries, extract city/location in entities.location if user mentions one
 """
+
+# ── Main chat system prompt ───────────────────────────────────────────────────
 
 CHAT_SYSTEM = """You are TaskFlow AI — a sharp, no-filler productivity assistant inside a terminal task manager.
 
@@ -89,58 +108,65 @@ TODAY: {today}
 
 === LANGUAGE RULE (CRITICAL) ===
 Detect the language/style of each user message and reply in the EXACT same language.
-- English only → English only
-- Hindi (Devanagari) → Hindi
-- Hinglish (Hindi words in Roman script) → Hinglish
-- Mix → match their mix
+- English → English | Hindi (Devanagari) → Hindi | Hinglish → Hinglish | Mix → match mix
 Never switch language on your own.
+
+=== CURRENT TASK STATE ===
+{task_stats}
+
+Task state awareness rules:
+- total_tasks=0 means user has NO tasks at all. Tell them clearly. Offer to add one.
+- Never show a task list when there are 0 tasks — just say so in plain text.
+- If overdue > 0, always mention it when user asks about tasks or analytics.
+- If pending > 0, stay aware of this context.
 
 === CURRENT TASK DRAFT ===
 {draft_context}
 
-=== DRAFT RULES ===
-- DO NOT ask again for fields already in the draft above.
-- Ask for missing fields 1-2 at a time. Don't dump all questions at once.
-- If user switches topic mid-creation: answer them, then gently remind about the unfinished task.
-- Once you have at least the NAME, you may apply defaults (priority: Medium, category: General) and confirm.
-- Emit "update_draft" whenever user gives any task field, even partially.
-- Emit "confirm_task" to show preview BEFORE saving when all fields are ready.
-- Emit "create_task" only after user confirms the preview or clearly says to save.
-- Emit "clear_draft" if user explicitly abandons the current task.
+Draft rules:
+- DO NOT re-ask fields already in draft.
+- Ask 1-2 missing fields at a time.
+- If user switches topic: answer first, then remind about the open draft.
+- Emit "update_draft" when user gives any task field.
+- Emit "confirm_task" when all fields are ready (shows preview).
+- Emit "create_task" only after user confirms preview.
+- Emit "clear_draft" if user abandons task creation.
 
 === DETECTED USER INTENT ===
 {intent_context}
 
-=== INTENT ALIGNMENT RULES ===
-- ONLY emit show_analytics if the intent is "analytics". Do NOT add it for list_tasks or search_tasks.
-- ONLY emit list_tasks if the intent is "list_tasks". Do NOT show analytics alongside it.
-- Match the action to the intent — one action per response unless chaining is logically needed.
-- If intent is "search_tasks", emit search_tasks, NOT list_tasks + show_analytics.
+Intent alignment rules:
+- ONLY emit show_analytics when intent is "analytics".
+- ONLY emit list_tasks when intent is "list_tasks".
+- For weather/general_question: just reply in text. DO NOT emit ANY task action.
+- One action per response unless chaining is logically required.
 
-=== OTHER ACTIONS ===
-search_tasks | list_tasks | edit_task | complete_task | delete_task | show_analytics
+=== LOCATION & WEB SEARCH CONTEXT ===
+{location_context}
 
-=== ACTION FORMAT ===
-Append exactly ONE JSON block at the very END of your reply — nothing after it:
+If web search results are injected in the prompt:
+- Use them to answer weather / general questions accurately.
+- Summarise clearly in user's language.
+- Do not mention "web search" or "search results" explicitly — just answer naturally.
 
-TASKFLOW_ACTION:{"action":"ACTION_NAME","data":{...}}
+=== ACTIONS (task intents only) ===
+TASKFLOW_ACTION:{"action":"ACTION_NAME","data":{...}}  ← append at very END of reply, nothing after.
 
-Action reference:
-  update_draft   → data: {name?, priority?, due_date?, category?, notes?}
-  confirm_task   → data: full task fields to preview (shows confirm prompt to user)
-  create_task    → data: {name, priority, due_date, category, notes?}
-  clear_draft    → data: {}
-  search_tasks   → data: {query}
-  list_tasks     → data: {status?, category?, priority?}
-  edit_task      → data: {task_id, updates:{field:value,...}}
-  complete_task  → data: {task_id}
-  delete_task    → data: {task_id}
-  show_analytics → data: {}
+  update_draft   → {name?, priority?, due_date?, category?, notes?}
+  confirm_task   → full task fields for preview
+  create_task    → {name, priority, due_date, category, notes?}
+  clear_draft    → {}
+  search_tasks   → {query}
+  list_tasks     → {status?, category?, priority?}
+  edit_task      → {task_id, updates:{field:value,...}}
+  complete_task  → {task_id}
+  delete_task    → {task_id}
+  show_analytics → {}
 
 === STYLE ===
 - 1-2 sentences unless explaining something complex.
-- No "Certainly!", "Of course!", "Great!", "Sure thing!".
-- Be direct and human. Just help.
+- No "Certainly!", "Of course!", "Great!".
+- Direct and human. Just help.
 """
 
 
@@ -148,6 +174,17 @@ class AIGateway:
 
     def _expired(self):
         return date.today() > EXPIRY
+
+    # ── IP → City ─────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def get_city_from_ip() -> str | None:
+        """Quick IP geolocation. Returns city name or None."""
+        try:
+            data = requests.get("https://ipinfo.io/json", timeout=3).json()
+            return data.get("city")
+        except Exception:
+            return None
 
     # ── Block parser ─────────────────────────────────────────────────────────
 
@@ -211,8 +248,7 @@ class AIGateway:
     _PROXY_ERR_MARKERS = ("too slow", "timed out", "provider", "⚠", "error:", "unavailable")
 
     def _is_proxy_error(self, text: str) -> bool:
-        lo = text.lower()
-        return any(m in lo for m in self._PROXY_ERR_MARKERS)
+        return any(m in text.lower() for m in self._PROXY_ERR_MARKERS)
 
     # ── Wake-up ping ─────────────────────────────────────────────────────────
 
@@ -284,31 +320,29 @@ class AIGateway:
     # ── Intent Classifier ─────────────────────────────────────────────────────
 
     def classify_intent(self, user_message: str, history=None) -> dict:
-        """
-        Fast Haiku call to classify user intent before the main AI response.
-        Returns dict: {intent, entities, status_msg}
-        Falls back to 'unclear' on any error — never blocks the main flow.
-        """
-        # Build recent context (last 2 exchanges only — keep it cheap)
+        """Fast Haiku call (~2-4s) to classify user intent before main AI."""
         recent = ""
         if history:
-            tail = history[-4:]
             recent = "\n".join(
                 f"{'User' if m['role'] == 'user' else 'AI'}: {m['content'][:120]}"
-                for m in tail
+                for m in history[-4:]
             )
 
         prompt = (
-            f"{INTENT_CLASSIFY_SYSTEM}\n\n"
-            f"Recent context:\n{recent}\n\n" if recent else f"{INTENT_CLASSIFY_SYSTEM}\n\n"
-        ) + f"User message: \"{user_message}\"\n\nJSON:"
+            INTENT_CLASSIFY_SYSTEM + "\n\n"
+            + (f"Recent context:\n{recent}\n\n" if recent else "")
+            + f"User message: \"{user_message}\"\n\nJSON:"
+        )
 
         result, err = self._call(CLAUDE, prompt, timeout=15)
         if err or not result:
-            return {"intent": "unclear", "entities": {}, "status_msg": INTENT_STATUS["unclear"]}
+            return {
+                "intent": "unclear", "entities": {},
+                "status_msg": INTENT_STATUS["unclear"], "needs_web": False,
+            }
 
         try:
-            clean = result.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+            clean  = result.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
             parsed = json.loads(clean)
             intent = parsed.get("intent", "unclear")
             if intent not in INTENTS:
@@ -318,85 +352,119 @@ class AIGateway:
                 "entities":   parsed.get("entities", {}),
                 "status_msg": INTENT_STATUS.get(intent, INTENT_STATUS["unclear"]),
                 "label":      INTENTS.get(intent, ""),
+                "needs_web":  intent in WEB_SEARCH_INTENTS,
             }
         except (json.JSONDecodeError, AttributeError):
-            return {"intent": "unclear", "entities": {}, "status_msg": INTENT_STATUS["unclear"]}
+            return {
+                "intent": "unclear", "entities": {},
+                "status_msg": INTENT_STATUS["unclear"], "needs_web": False,
+            }
+
+    # ── Action validator ─────────────────────────────────────────────────────
 
     def validate_action(self, intent: str, action_name: str | None) -> tuple[bool, str]:
-        """
-        Check if the AI's triggered action matches the classified intent.
-        Returns (is_match, message)
-        """
-        if not action_name or intent in ("chitchat", "unclear"):
+        if not action_name or intent in NO_ACTION_INTENTS or intent == "unclear":
             return True, ""
-
         expected = INTENT_TO_ACTIONS.get(intent, set())
-        if not expected:  # intent has no required action
+        if not expected:
             return True, ""
-
         if action_name in expected:
-            return True, f"✓ {action_name}"
-
-        # Mismatch — but some are acceptable cross-triggers
-        # e.g. user said "list tasks" and AI also updates draft → fine
+            return True, ""
         soft_ok = {
-            "list_tasks":    {"search_tasks"},
-            "search_tasks":  {"list_tasks"},
-            "create_task":   {"list_tasks", "search_tasks"},
+            "list_tasks":   {"search_tasks"},
+            "search_tasks": {"list_tasks"},
+            "create_task":  {"list_tasks", "search_tasks"},
         }
         if action_name in soft_ok.get(intent, set()):
             return True, ""
-
-        return False, (
-            f"Expected action for '{intent}' but got '{action_name}'"
-        )
+        return False, f"Expected action for '{intent}' but got '{action_name}'"
 
     # ── Chat ─────────────────────────────────────────────────────────────────
 
-    def chat(self, user_message: str, history=None, draft: dict = None, intent_info: dict = None):
+    def chat(
+        self,
+        user_message: str,
+        history=None,
+        draft: dict = None,
+        intent_info: dict = None,
+        task_stats: dict = None,
+        location: str = None,
+    ):
         """
-        Uses Deepshi R2 with thinking enabled.
-        intent_info — optional pre-classified intent dict from classify_intent()
+        Main chat. Passes task_stats + location + intent into system prompt.
+        Enables web_search=True for weather/general_question intents.
         Returns (reply_text, action_dict | None, error)
         """
         draft = draft or {}
+
+        # ── Draft context ─────────────────────────────────────────────────────
         if draft:
-            collected  = ", ".join(f"{k}: {v}" for k, v in draft.items() if v)
-            remaining  = [k for k in ("name", "priority", "due_date", "category") if not draft.get(k)]
-            draft_ctx  = (
+            collected = ", ".join(f"{k}: {v}" for k, v in draft.items() if v)
+            remaining = [k for k in ("name", "priority", "due_date", "category") if not draft.get(k)]
+            draft_ctx = (
                 f"Already collected → {collected}\n"
-                f"Still missing     → {', '.join(remaining) if remaining else 'nothing (all set, ready to confirm)'}"
+                f"Still missing     → {', '.join(remaining) if remaining else 'nothing (ready to confirm)'}"
             )
         else:
             draft_ctx = "Empty — no task being created yet."
 
-        # Inject intent context so AI knows what NOT to add
-        if intent_info and intent_info.get("intent"):
-            intent_ctx = (
-                f"Classified intent: {intent_info['intent']} — {INTENTS.get(intent_info['intent'], '')}\n"
-                f"Stick to this intent. Do NOT emit unrelated actions (e.g. show_analytics for list_tasks)."
+        # ── Task stats context ────────────────────────────────────────────────
+        if task_stats:
+            stats_ctx = (
+                f"total_tasks={task_stats.get('total', 0)}  "
+                f"pending={task_stats.get('pending', 0)}  "
+                f"completed={task_stats.get('completed', 0)}  "
+                f"overdue={task_stats.get('overdue', 0)}  "
+                f"productivity={task_stats.get('productivity', 0)}%"
             )
         else:
-            intent_ctx = "Intent: unclear — use your best judgement."
+            stats_ctx = "Task stats unavailable."
+
+        # ── Intent context ────────────────────────────────────────────────────
+        intent_name = (intent_info or {}).get("intent", "unclear")
+        intent_ctx  = (
+            f"Classified intent: {intent_name} — {INTENTS.get(intent_name, '')}\n"
+            f"Stick to this intent. Do NOT emit unrelated task actions."
+        )
+
+        # ── Location context ──────────────────────────────────────────────────
+        if location:
+            loc_ctx = (
+                f"User's location (IP-detected): {location}\n"
+                f"Web search results are injected in the prompt. "
+                f"Use them to answer weather queries naturally."
+            )
+        else:
+            loc_ctx = "Location not detected."
 
         system = (
             CHAT_SYSTEM
-            .replace("{today}",         date.today().isoformat())
-            .replace("{draft_context}", draft_ctx)
-            .replace("{intent_context}", intent_ctx)
+            .replace("{today}",            date.today().isoformat())
+            .replace("{draft_context}",    draft_ctx)
+            .replace("{task_stats}",       stats_ctx)
+            .replace("{intent_context}",   intent_ctx)
+            .replace("{location_context}", loc_ctx)
         )
+
+        # Inject location into prompt for weather queries
+        needs_web   = (intent_info or {}).get("needs_web", False)
+        user_prompt = user_message
+        if needs_web and location:
+            user_prompt = f"[User location: {location}]\n{user_message}"
 
         raw, err = self._call(
             DEEPSHI,
-            f"{system}\n\nUser: {user_message}",
+            f"{system}\n\nUser: {user_prompt}",
             history=history,
             timeout=120,
             enable_thinking=True,
             session_key="taskflow_chat",
+            web_search=needs_web,          # proxy enriches prompt with search
         )
         if err or not raw:
             return None, None, err or "No response."
 
+        # Split out action block
         action, reply = None, raw
         if ACTION_TAG in raw:
             parts      = raw.split(ACTION_TAG, 1)
@@ -407,6 +475,10 @@ class AIGateway:
                 action = json.loads(clean)
             except json.JSONDecodeError:
                 action = None
+
+        # Hard strip: no task actions for non-task intents
+        if action and intent_name in NO_ACTION_INTENTS:
+            action = None
 
         return reply, action, None
 
