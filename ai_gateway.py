@@ -15,14 +15,73 @@ HEADERS          = {
     "Content-Type":    "application/json",
 }
 
-RETRY_WAIT  = 25   # seconds to wait on 502/504 (Render cold-start window)
-MAX_RETRIES = 1    # one silent retry is enough
+RETRY_WAIT  = 25
+MAX_RETRIES = 1
 
 EXPIRY  = date(2026, 5, 20)
 CLAUDE  = "claude-haiku-4-5-20251001"
 DEEPSHI = "deepshi-r2"
 
 ACTION_TAG = "TASKFLOW_ACTION:"
+
+# ── Intent definitions ────────────────────────────────────────────────────────
+
+INTENTS = {
+    "create_task":   "User wants to add / create a new task",
+    "list_tasks":    "User wants to see, list, or view existing tasks",
+    "search_tasks":  "User wants to find / search a specific task by keyword",
+    "complete_task": "User wants to mark a task as done / complete",
+    "delete_task":   "User wants to delete or remove a task",
+    "edit_task":     "User wants to edit, update, or change a task",
+    "analytics":     "User wants stats, productivity info, or summary numbers",
+    "optimize":      "User wants a schedule, time plan, or optimization",
+    "chitchat":      "General conversation, greeting, or unrelated to tasks",
+    "unclear":       "Cannot determine intent clearly",
+}
+
+# Which action names map to which intent
+INTENT_TO_ACTIONS = {
+    "create_task":   {"update_draft", "confirm_task", "create_task", "clear_draft"},
+    "list_tasks":    {"list_tasks"},
+    "search_tasks":  {"search_tasks"},
+    "complete_task": {"complete_task"},
+    "delete_task":   {"delete_task"},
+    "edit_task":     {"edit_task"},
+    "analytics":     {"show_analytics"},
+    "optimize":      set(),
+    "chitchat":      set(),
+    "unclear":       set(),
+}
+
+# Human-readable loading messages per intent
+INTENT_STATUS = {
+    "create_task":   "Building your task...",
+    "list_tasks":    "Fetching your tasks...",
+    "search_tasks":  "Searching tasks...",
+    "complete_task": "Updating task status...",
+    "delete_task":   "Processing deletion...",
+    "edit_task":     "Preparing task edit...",
+    "analytics":     "Crunching your numbers...",
+    "optimize":      "Optimizing your schedule...",
+    "chitchat":      "Thinking...",
+    "unclear":       "Processing your request...",
+}
+
+INTENT_CLASSIFY_SYSTEM = """You are an intent classifier for a task management app.
+
+Given a user message, return ONLY a JSON object — no markdown, no explanation:
+{"intent": "<one of the intents>", "entities": {"task_name": null, "task_id": null, "keyword": null}}
+
+Valid intents: create_task, list_tasks, search_tasks, complete_task, delete_task, edit_task, analytics, optimize, chitchat, unclear
+
+Rules:
+- If user mentions a task ID (like A1B2C3), extract it in task_id
+- If user wants to see/show/list tasks → list_tasks
+- If user asks "which task" or "what task" or "show me that task" → list_tasks or search_tasks
+- Stats/productivity/rate/streak → analytics
+- General greetings or off-topic → chitchat
+- When unsure → unclear
+"""
 
 CHAT_SYSTEM = """You are TaskFlow AI — a sharp, no-filler productivity assistant inside a terminal task manager.
 
@@ -48,6 +107,15 @@ Never switch language on your own.
 - Emit "confirm_task" to show preview BEFORE saving when all fields are ready.
 - Emit "create_task" only after user confirms the preview or clearly says to save.
 - Emit "clear_draft" if user explicitly abandons the current task.
+
+=== DETECTED USER INTENT ===
+{intent_context}
+
+=== INTENT ALIGNMENT RULES ===
+- ONLY emit show_analytics if the intent is "analytics". Do NOT add it for list_tasks or search_tasks.
+- ONLY emit list_tasks if the intent is "list_tasks". Do NOT show analytics alongside it.
+- Match the action to the intent — one action per response unless chaining is logically needed.
+- If intent is "search_tasks", emit search_tasks, NOT list_tasks + show_analytics.
 
 === OTHER ACTIONS ===
 search_tasks | list_tasks | edit_task | complete_task | delete_task | show_analytics
@@ -85,18 +153,9 @@ class AIGateway:
 
     @staticmethod
     def _extract_text(raw) -> str | None:
-        """
-        Pull clean reply text out of whatever the proxy returns.
-        Handles: plain str | JSON array string | concatenated JSON objects |
-                 list of content blocks (reasoning / text).
-        Thinking / reasoning blocks are silently skipped; only 'text' blocks
-        are kept.  Falls back to reasoning content when no text block exists
-        (e.g. get_motivation where the model puts everything in <thinking>).
-        """
         if not raw:
             return None
 
-        # ── Already a Python list ─────────────────────────────────────────
         if isinstance(raw, list):
             text_parts = [
                 b.get("text", "")
@@ -104,7 +163,7 @@ class AIGateway:
                 if isinstance(b, dict) and b.get("type") == "text"
             ]
             result = " ".join(text_parts).strip()
-            if not result:                        # fallback to reasoning
+            if not result:
                 result = " ".join(
                     b.get("content", b.get("text", ""))
                     for b in raw
@@ -114,15 +173,13 @@ class AIGateway:
 
         raw = str(raw).strip()
 
-        # ── JSON array string ─────────────────────────────────────────────
         if raw.startswith("["):
             try:
                 blocks = json.loads(raw)
-                return AIGateway._extract_text(blocks)   # recurse with list
+                return AIGateway._extract_text(blocks)
             except json.JSONDecodeError:
                 pass
 
-        # ── Single JSON object ────────────────────────────────────────────
         if raw.startswith("{"):
             try:
                 block = json.loads(raw)
@@ -133,8 +190,6 @@ class AIGateway:
             except json.JSONDecodeError:
                 pass
 
-        # ── Concatenated JSON objects (proxy quirk) ───────────────────────
-        # e.g.  {"type":"reasoning","content":"..."} {"type":"text","text":"..."}
         text_match = re.search(
             r'"type"\s*:\s*"text".*?"text"\s*:\s*"((?:[^"\\]|\\.)*)"',
             raw, re.DOTALL
@@ -149,7 +204,6 @@ class AIGateway:
         if reasoning_match:
             return reasoning_match.group(1).replace('\\"', '"').replace("\\n", "\n").strip()
 
-        # ── Plain text (no blocks) ────────────────────────────────────────
         return raw or None
 
     # ── Proxy error detector ─────────────────────────────────────────────────
@@ -164,11 +218,6 @@ class AIGateway:
 
     @staticmethod
     def wake_up():
-        """
-        Fire a lightweight GET to /health so Render's AI backend starts
-        warming up while the dashboard is rendering.
-        Called in a background thread — errors silently ignored.
-        """
         try:
             requests.get(PROXY_HEALTH_URL, timeout=10)
         except Exception:
@@ -193,7 +242,6 @@ class AIGateway:
                     PROXY_URL, json=payload, headers=HEADERS, timeout=timeout
                 )
 
-                # Render cold-start: backend not yet up — wait and retry once
                 if resp.status_code in (502, 503, 504):
                     if attempt < MAX_RETRIES:
                         time.sleep(RETRY_WAIT)
@@ -213,7 +261,6 @@ class AIGateway:
                 )
                 text = self._extract_text(raw)
 
-                # Proxy-level error surfaced as a 200-OK body
                 if text and self._is_proxy_error(text):
                     return None, "AI is taking too long. Please try again in a moment."
 
@@ -234,12 +281,82 @@ class AIGateway:
 
         return None, "Request failed after retry."
 
+    # ── Intent Classifier ─────────────────────────────────────────────────────
+
+    def classify_intent(self, user_message: str, history=None) -> dict:
+        """
+        Fast Haiku call to classify user intent before the main AI response.
+        Returns dict: {intent, entities, status_msg}
+        Falls back to 'unclear' on any error — never blocks the main flow.
+        """
+        # Build recent context (last 2 exchanges only — keep it cheap)
+        recent = ""
+        if history:
+            tail = history[-4:]
+            recent = "\n".join(
+                f"{'User' if m['role'] == 'user' else 'AI'}: {m['content'][:120]}"
+                for m in tail
+            )
+
+        prompt = (
+            f"{INTENT_CLASSIFY_SYSTEM}\n\n"
+            f"Recent context:\n{recent}\n\n" if recent else f"{INTENT_CLASSIFY_SYSTEM}\n\n"
+        ) + f"User message: \"{user_message}\"\n\nJSON:"
+
+        result, err = self._call(CLAUDE, prompt, timeout=15)
+        if err or not result:
+            return {"intent": "unclear", "entities": {}, "status_msg": INTENT_STATUS["unclear"]}
+
+        try:
+            clean = result.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+            parsed = json.loads(clean)
+            intent = parsed.get("intent", "unclear")
+            if intent not in INTENTS:
+                intent = "unclear"
+            return {
+                "intent":     intent,
+                "entities":   parsed.get("entities", {}),
+                "status_msg": INTENT_STATUS.get(intent, INTENT_STATUS["unclear"]),
+                "label":      INTENTS.get(intent, ""),
+            }
+        except (json.JSONDecodeError, AttributeError):
+            return {"intent": "unclear", "entities": {}, "status_msg": INTENT_STATUS["unclear"]}
+
+    def validate_action(self, intent: str, action_name: str | None) -> tuple[bool, str]:
+        """
+        Check if the AI's triggered action matches the classified intent.
+        Returns (is_match, message)
+        """
+        if not action_name or intent in ("chitchat", "unclear"):
+            return True, ""
+
+        expected = INTENT_TO_ACTIONS.get(intent, set())
+        if not expected:  # intent has no required action
+            return True, ""
+
+        if action_name in expected:
+            return True, f"✓ {action_name}"
+
+        # Mismatch — but some are acceptable cross-triggers
+        # e.g. user said "list tasks" and AI also updates draft → fine
+        soft_ok = {
+            "list_tasks":    {"search_tasks"},
+            "search_tasks":  {"list_tasks"},
+            "create_task":   {"list_tasks", "search_tasks"},
+        }
+        if action_name in soft_ok.get(intent, set()):
+            return True, ""
+
+        return False, (
+            f"Expected action for '{intent}' but got '{action_name}'"
+        )
+
     # ── Chat ─────────────────────────────────────────────────────────────────
 
-    def chat(self, user_message: str, history=None, draft: dict = None):
+    def chat(self, user_message: str, history=None, draft: dict = None, intent_info: dict = None):
         """
-        Uses Deepshi R2 with thinking enabled — better context retention,
-        no hallucination, remembers full conversation + draft state.
+        Uses Deepshi R2 with thinking enabled.
+        intent_info — optional pre-classified intent dict from classify_intent()
         Returns (reply_text, action_dict | None, error)
         """
         draft = draft or {}
@@ -253,17 +370,27 @@ class AIGateway:
         else:
             draft_ctx = "Empty — no task being created yet."
 
+        # Inject intent context so AI knows what NOT to add
+        if intent_info and intent_info.get("intent"):
+            intent_ctx = (
+                f"Classified intent: {intent_info['intent']} — {INTENTS.get(intent_info['intent'], '')}\n"
+                f"Stick to this intent. Do NOT emit unrelated actions (e.g. show_analytics for list_tasks)."
+            )
+        else:
+            intent_ctx = "Intent: unclear — use your best judgement."
+
         system = (
             CHAT_SYSTEM
             .replace("{today}",         date.today().isoformat())
             .replace("{draft_context}", draft_ctx)
+            .replace("{intent_context}", intent_ctx)
         )
 
         raw, err = self._call(
             DEEPSHI,
             f"{system}\n\nUser: {user_message}",
             history=history,
-            timeout=120,                     # Deepshi R2 can think 40-80s
+            timeout=120,
             enable_thinking=True,
             session_key="taskflow_chat",
         )
@@ -331,5 +458,4 @@ class AIGateway:
             f"{stats.get('overdue')} overdue, {p}% rate, {stats.get('streak')}-day streak.\n"
             f"Direct, witty, specific. No filler. End with one punchy line."
         )
-        # Claude Haiku — fast (3-5s), no thinking overhead needed for motivation
         return self._call(CLAUDE, prompt, timeout=30)
