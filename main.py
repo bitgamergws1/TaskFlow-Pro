@@ -223,6 +223,11 @@ def _show_dashboard():
     ctrl = _get_ctrl()
     _print_banner()
 
+    # Ping proxy early so Render's AI backend warms up in background
+    import threading as _t
+    from ai_gateway import AIGateway as _AIGateway
+    _t.Thread(target=_AIGateway.wake_up, daemon=True).start()
+
     # Fetch weather in background
     weather_result = [None]
     def _weather_thread():
@@ -667,7 +672,7 @@ def chat():
             continue
 
         # ── AI turn ────────────────────────────────────────────────────────
-        with console.status("[dim]Thinking... (may take 30–90s)[/dim]", spinner="dots"):
+        with console.status("[dim]Thinking... (30–90s, auto-retries on slow start)[/dim]", spinner="dots"):
             reply, action, err = ctrl.chat(user_input, history=history, draft=draft)
 
         if err:
