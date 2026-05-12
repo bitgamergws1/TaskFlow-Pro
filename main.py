@@ -275,11 +275,18 @@ def _show_dashboard():
 
     # ── AI motivation ──────────────────────────────────────────────────────
     console.print()
-    with console.status("[dim]Getting your daily brief...[/dim]", spinner="dots"):
-        msg, _ = ctrl.get_motivation()
+    with console.status("[dim]Getting your daily brief... (may take ~30s)[/dim]", spinner="dots"):
+        msg, mot_err = ctrl.get_motivation()
     if msg:
         console.print(Panel(
             f"[italic white]{msg}[/italic white]",
+            title="[dim]TaskFlow AI[/dim]",
+            border_style="dim",
+            padding=(0, 2),
+        ))
+    elif mot_err:
+        console.print(Panel(
+            f"[dim]Could not load daily brief — {mot_err}[/dim]",
             title="[dim]TaskFlow AI[/dim]",
             border_style="dim",
             padding=(0, 2),
@@ -660,11 +667,17 @@ def chat():
             continue
 
         # ── AI turn ────────────────────────────────────────────────────────
-        with console.status("[dim]thinking...[/dim]", spinner="dots"):
+        with console.status("[dim]Thinking... (may take 30–90s)[/dim]", spinner="dots"):
             reply, action, err = ctrl.chat(user_input, history=history, draft=draft)
 
         if err:
-            console.print(f"  [red]AI error:[/red] {err}\n")
+            console.print(Panel(
+                f"[yellow]⚠  {err}[/yellow]",
+                title="[dim]AI[/dim]",
+                border_style="yellow",
+                padding=(0, 2),
+            ))
+            console.print()
             continue
 
         # Update history
