@@ -428,6 +428,69 @@ class AIGateway:
 
         return True, "ok"
 
+    # ── ✅ NEW: Prompt Enhancer ────────────────────────────────────────────────
+
+    def enhance_prompt(self, user_message: str, history=None, draft=None) -> str:
+        """
+        Haiku call (~3s) that rewrites the user's message to be unambiguous
+        before it hits the classifier and main AI.
+
+        Resolves:
+        - Pronouns → actual task names  ("us task" → "Pani peena task")
+        - Follow-up questions           ("iska due date?" → "Pani peena task ka due date kya hai?")
+        - Mixed-language ambiguity
+        - Conversational shortcuts      ("haan", "wahi wala", "isko", "pehle wala")
+
+        Returns the enhanced message string. On failure returns original unchanged.
+        """
+        if not history and not draft:
+            return user_message  # no context to resolve against, skip
+
+        recent_ctx = ""
+        if history:
+            recent_ctx = "\n".join(
+                f"{'User' if m['role'] == 'user' else 'AI'}: {m['content'][:200]}"
+                for m in history[-6:]
+            )
+
+        draft_ctx = ""
+        if draft:
+            draft_ctx = "Current task draft: " + ", ".join(
+                f"{k}={v}" for k, v in draft.items() if v
+            )
+
+        prompt = f"""You are a message clarifier for a task manager chatbot.
+
+Given the conversation history and the user's latest message, rewrite the message
+to be fully self-contained and unambiguous. Rules:
+- Resolve pronouns: "us task" / "isko" / "woh" / "wahi" → use the actual task name or ID from history
+- Resolve follow-up shortcuts: "haan" / "theek hai" → spell out what the user is agreeing to
+- If user asks a general knowledge question (times, tips, advice) that is NOT about their task list → keep it as-is but add context like "[general question, not a task search]"
+- Preserve the user's original language (Hindi/Hinglish/English)
+- Do NOT change the meaning, do NOT add extra requests
+- If the message is already clear and self-contained, return it unchanged
+- Return ONLY the rewritten message, nothing else
+
+{draft_ctx}
+
+Conversation:
+{recent_ctx}
+
+Latest user message: "{user_message}"
+
+Rewritten:"""
+
+        result, err = self._call(CLAUDE, prompt, timeout=12)
+        if err or not result:
+            return user_message
+
+        enhanced = result.strip().strip('"').strip("'")
+        # Safety: if enhancer returns something wildly different (>4x length), discard
+        if len(enhanced) > len(user_message) * 5:
+            return user_message
+
+        return enhanced or user_message
+
     # ── Intent Classifier ─────────────────────────────────────────────────────
 
     def classify_intent(self, user_message: str, history=None) -> dict:
