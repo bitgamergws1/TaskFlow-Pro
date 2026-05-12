@@ -197,18 +197,14 @@ That's it. Every task write from the CLI (add / complete / delete / restore) wil
 
 ### Running Commands
 
-The project includes a `taskflow` shortcut wrapper so you don't have to type `python main.py` every time.
+The project includes a `taskflow` shortcut so you don't have to type `python main.py` every time.
 
-**Linux / macOS** — run once to enable the shortcut:
+**Linux / macOS** — run once:
 ```bash
 chmod +x taskflow
 ```
-Then use `taskflow <command>` everywhere below.
 
-**Windows (CMD)** — `taskflow.bat` is already included, just use:
-```cmd
-taskflow <command>
-```
+**Windows CMD** — `taskflow.bat` is already included, just use `taskflow <command>`.
 
 > Both `taskflow` and `python main.py` are identical — use whichever you prefer.
 
@@ -217,34 +213,68 @@ taskflow <command>
 ### Core Task Management
 
 ```
-taskflow                              → Show dashboard + AI daily boost/roast
-taskflow add                          → Add a task interactively (prompts for all fields)
-taskflow add --ai                     → Parse a task from natural language via AI
-taskflow list                         → List all active (non-deleted) tasks
-taskflow list --status pending        → Filter by status: pending | completed
-taskflow list --category Work         → Filter by category (Work, Study, Personal, ...)
-taskflow list --priority High         → Filter by priority: High | Medium | Low
-taskflow complete <ID>                → Mark a task as completed ✅
-taskflow delete <ID>                  → Soft-delete → moves task to recycle bin 🗑
-taskflow restore <ID>                 → Restore a task from the recycle bin
-taskflow bin                          → View all soft-deleted tasks in the recycle bin
-taskflow edit <ID>                    → Interactively edit any field of an existing task
-taskflow search "keyword"             → Full-text search across name, notes, and category
+taskflow                              → Dashboard + AI daily brief
+taskflow add                          → Add a task interactively
+taskflow add --ai                     → Natural language task parsing
+taskflow list                         → List all active tasks
+taskflow list --status pending        → Filter: pending | completed
+taskflow list --category Work         → Filter by category
+taskflow list --priority High         → Filter: High | Medium | Low
+taskflow complete <ID>                → Mark task as done ✓
+taskflow delete <ID>                  → Soft-delete → recycle bin
+taskflow restore <ID>                 → Restore from recycle bin
+taskflow bin                          → View recycle bin
+taskflow edit <ID>                    → Edit any field interactively
+taskflow search "keyword"             → Search name, notes, category
+taskflow weather                      → Show current weather (auto-detects city from IP)
+taskflow weather "Shimla"             → Set your city and show weather
 ```
+
+### AI Chat (`taskflow chat`)
+
+Start a natural-language session where you can manage tasks by just talking. Supports English, Hindi, and Hinglish — AI matches your language automatically.
+
+**Slash commands inside chat:**
+
+```
+/add              Start a fresh task creation
+/list             Show all tasks
+/list pending     Filter by status
+/list Work        Filter by category
+/done <ID>        Complete a task
+/del <ID>         Delete a task
+/search <query>   Search tasks
+/optimize         Generate AI schedule
+/stats            Show analytics
+/report           Export Markdown report
+/draft            Show current task draft
+/clear            Clear current draft
+/help             Show all slash commands
+/exit             Leave chat
+```
+
+**How chat draft memory works:**
+
+1. You say `"add a math assignment"` → AI stores `name: Math Assignment` in draft
+2. AI asks for priority → you say `"high"` → draft updates: `priority: High`
+3. You suddenly ask `"show my pending tasks"` → AI lists tasks, **draft is preserved**
+4. You say `"ok continue"` → AI remembers draft, asks for due date
+5. All fields ready → AI shows a **preview card**, asks you to confirm before saving
+6. You confirm → task saved, draft cleared
 
 ### AI-Powered Commands
 
 ```
-taskflow optimize                     → Generate a full AI time-blocked daily schedule
-taskflow focus <ID>                   → Start a 25-minute Pomodoro focus timer
-taskflow focus <ID> --minutes 50      → Custom Pomodoro duration
+taskflow optimize                     → Full AI time-blocked daily schedule
+taskflow focus <ID>                   → 25-minute Pomodoro timer
+taskflow focus <ID> --minutes 50      → Custom duration
 ```
 
 ### Reporting & Analytics
 
 ```
-taskflow analytics                    → Full productivity analytics + ASCII bar charts
-taskflow export                       → Export a Markdown report of all tasks and stats
+taskflow analytics                    → Analytics + ASCII bar charts
+taskflow export                       → Export Markdown report
 ```
 
 ---
@@ -404,6 +434,11 @@ All AI calls route through the DevNest proxy, which:
 - [x] AI natural language task parsing
 - [x] AI full-day schedule optimizer
 - [x] AI daily motivation / productivity roast on dashboard open
+- [x] AI Chat mode with slash commands (`/add`, `/list`, `/done`, `/stats`, etc.)
+- [x] Chat draft memory — AI remembers partial task across topic switches
+- [x] Multi-language chat — AI matches English / Hindi / Hinglish automatically
+- [x] Task confirmation preview before saving (via chat)
+- [x] Weather widget on dashboard (auto-detects city from IP via ipinfo.io)
 - [x] Background Supabase cloud sync (non-blocking, zero client secrets)
 - [x] Soft delete with fully functional recycle bin + restore
 - [x] ASCII productivity analytics charts
@@ -467,13 +502,17 @@ taskflow-pro/
 ### Demo Script (suggested order)
 
 ```cmd
-taskflow                               # 1. Show the dashboard + AI roast
-taskflow add --ai                      # 2. Add a task via natural language
-taskflow list                          # 3. Show task list
-taskflow optimize                      # 4. Generate AI schedule
-taskflow focus <ID>                    # 5. Start Pomodoro timer (show live countdown)
-taskflow analytics                     # 6. Show ASCII charts
-taskflow export                        # 7. Export Markdown report
+taskflow                               # 1. Dashboard + weather + AI brief
+taskflow weather "Shimla"              # 2. Set city (only needed once)
+taskflow chat                          # 3. Open AI chat
+/add                                   #    Start task creation
+/stats                                 #    Check analytics
+/exit                                  #    Leave chat
+taskflow add --ai                      # 4. Quick NL task add
+taskflow optimize                      # 5. Generate AI schedule
+taskflow focus <ID>                    # 6. Pomodoro timer
+taskflow analytics                     # 7. ASCII charts
+taskflow export                        # 8. Export report
 ```
 
 ---
