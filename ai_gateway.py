@@ -1,5 +1,6 @@
 """
 ai_gateway.py — Multi-Model AI Routing via DevNest Proxy
+         + Response Validator & Auto-Retry (v2)
 """
 
 import json
@@ -17,6 +18,12 @@ HEADERS          = {
 
 RETRY_WAIT  = 25
 MAX_RETRIES = 1
+
+# ── Validation settings ───────────────────────────────────────────────────────
+CHAT_MAX_RETRIES   = 2          # max auto-retries on bad response
+CHAT_RETRY_DELAY   = 3          # seconds between retries
+MIN_REPLY_LENGTH   = 8          # a valid reply must have at least 8 chars
+JUDGE_THRESHOLD    = 5          # judge score below this → retry (0-10 scale)
 
 EXPIRY  = date(2026, 5, 20)
 CLAUDE  = "claude-haiku-4-5-20251001"
@@ -41,7 +48,6 @@ INTENTS = {
     "unclear":          "Cannot determine intent clearly",
 }
 
-# Which action names map to which intent
 INTENT_TO_ACTIONS = {
     "create_task":      {"update_draft", "confirm_task", "create_task", "clear_draft"},
     "list_tasks":       {"list_tasks"},
@@ -51,13 +57,12 @@ INTENT_TO_ACTIONS = {
     "edit_task":        {"edit_task"},
     "analytics":        {"show_analytics"},
     "optimize":         set(),
-    "weather":          set(),   # no task action — pure web search reply
+    "weather":          set(),
     "general_question": set(),
     "chitchat":         set(),
     "unclear":          set(),
 }
 
-# Loading message shown while AI thinks
 INTENT_STATUS = {
     "create_task":      "Building your task...",
     "list_tasks":       "Fetching your tasks...",
@@ -73,13 +78,10 @@ INTENT_STATUS = {
     "unclear":          "Processing your request...",
 }
 
-# Intents that should trigger proxy web search
 WEB_SEARCH_INTENTS = {"weather", "general_question"}
+NO_ACTION_INTENTS  = {"weather", "general_question", "chitchat"}
 
-# Intents where task actions should be stripped from response
-NO_ACTION_INTENTS = {"weather", "general_question", "chitchat"}
-
-# ── Classify system prompt ────────────────────────────────────────────────────
+# ── Intent classify system prompt ─────────────────────────────────────────────
 
 INTENT_CLASSIFY_SYSTEM = """You are an intent classifier for a task management app.
 
@@ -169,6 +171,22 @@ TASKFLOW_ACTION:{"action":"ACTION_NAME","data":{...}}  ← append at very END of
 - Direct and human. Just help.
 """
 
+# ── Response Validator judge prompt ──────────────────────────────────────────
+
+JUDGE_SYSTEM = """You are a strict quality checker for an AI assistant's responses.
+
+Score the response 0-10 based on:
+- Is it a complete, coherent sentence? (not truncated mid-word)
+- Does it actually address the user's message?
+- Is it free of random symbols, JSON fragments, or gibberish?
+- Is it in a language the user would understand?
+
+Return ONLY a JSON object, nothing else:
+{"score": <0-10>, "reason": "<one short sentence>", "is_valid": <true|false>}
+
+A score of 5+ = valid. Below 5 = invalid (retry needed).
+"""
+
 
 class AIGateway:
 
@@ -179,7 +197,6 @@ class AIGateway:
 
     @staticmethod
     def get_city_from_ip() -> str | None:
-        """Quick IP geolocation. Returns city name or None."""
         try:
             data = requests.get("https://ipinfo.io/json", timeout=3).json()
             return data.get("city")
@@ -317,10 +334,93 @@ class AIGateway:
 
         return None, "Request failed after retry."
 
+    # ── ✅ NEW: Rule-based fast validator ─────────────────────────────────────
+
+    def _fast_validate(self, text: str) -> tuple[bool, str]:
+        """
+        Quick heuristic checks before spending tokens on the judge.
+        Returns (is_valid, reason).
+        """
+        if not text or len(text.strip()) < MIN_REPLY_LENGTH:
+            return False, f"Response too short ({len(text.strip()) if text else 0} chars)"
+
+        t = text.strip()
+
+        # Starts with garbage punctuation/symbols (like ', so may{')
+        if re.match(r'^[,\.\!\?\{\}\[\]<>|\\\/\*#@%^&~`]+', t):
+            return False, "Response starts with punctuation/symbols"
+
+        # Ends abruptly mid-word or with open bracket
+        if re.search(r'[\{\[\(]\s*$', t):
+            return False, "Response ends with unclosed bracket"
+
+        # Contains raw JSON fragments mixed into text (not the action tag)
+        if ACTION_TAG not in text and re.search(r'"\s*:\s*"[^"]{0,30}"\s*,', t):
+            return False, "Response contains raw JSON fragments"
+
+        # Pure whitespace / newlines
+        if not t.replace('\n', '').replace('\r', '').strip():
+            return False, "Response is only whitespace"
+
+        # Suspiciously short reply that looks truncated (word cut mid)
+        words = t.split()
+        if len(words) <= 3 and not any(c in t for c in '.?!।'):
+            return False, f"Response suspiciously short ({len(words)} words, no sentence ender)"
+
+        return True, "ok"
+
+    # ── ✅ NEW: Haiku judge (AI validates AI) ─────────────────────────────────
+
+    def _judge_response(self, user_msg: str, ai_reply: str) -> tuple[bool, int, str]:
+        """
+        Sends user message + AI reply to Haiku for quality scoring.
+        Returns (is_valid, score, reason).
+        Fast: Haiku responds in ~3-5s.
+        """
+        prompt = (
+            f"{JUDGE_SYSTEM}\n\n"
+            f"User message: \"{user_msg[:300]}\"\n"
+            f"AI reply: \"{ai_reply[:500]}\"\n\n"
+            f"JSON:"
+        )
+        result, err = self._call(CLAUDE, prompt, timeout=12)
+        if err or not result:
+            # If judge itself fails, assume valid (don't block forever)
+            return True, 6, "Judge unavailable — assuming valid"
+
+        try:
+            clean  = result.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+            parsed = json.loads(clean)
+            score  = int(parsed.get("score", 6))
+            reason = parsed.get("reason", "")
+            valid  = parsed.get("is_valid", score >= JUDGE_THRESHOLD)
+            return bool(valid), score, reason
+        except (json.JSONDecodeError, ValueError, TypeError):
+            return True, 6, f"Judge parse error: {result[:60]}"
+
+    # ── ✅ NEW: Combined validation pipeline ──────────────────────────────────
+
+    def _validate_response(self, user_msg: str, raw_reply: str) -> tuple[bool, str]:
+        """
+        Stage 1: fast heuristics (no API call)
+        Stage 2: Haiku judge (only if Stage 1 passes)
+        Returns (is_valid, failure_reason)
+        """
+        # Stage 1 — instant rules
+        fast_ok, fast_reason = self._fast_validate(raw_reply)
+        if not fast_ok:
+            return False, f"[fast-check] {fast_reason}"
+
+        # Stage 2 — AI judge
+        judge_ok, score, judge_reason = self._judge_response(user_msg, raw_reply)
+        if not judge_ok:
+            return False, f"[judge score={score}] {judge_reason}"
+
+        return True, "ok"
+
     # ── Intent Classifier ─────────────────────────────────────────────────────
 
     def classify_intent(self, user_message: str, history=None) -> dict:
-        """Fast Haiku call (~2-4s) to classify user intent before main AI."""
         recent = ""
         if history:
             recent = "\n".join(
@@ -379,7 +479,7 @@ class AIGateway:
             return True, ""
         return False, f"Expected action for '{intent}' but got '{action_name}'"
 
-    # ── Chat ─────────────────────────────────────────────────────────────────
+    # ── Chat (with validation + auto-retry) ──────────────────────────────────
 
     def chat(
         self,
@@ -391,13 +491,13 @@ class AIGateway:
         location: str = None,
     ):
         """
-        Main chat. Passes task_stats + location + intent into system prompt.
-        Enables web_search=True for weather/general_question intents.
+        Main chat. Validates every response before returning.
+        Auto-retries up to CHAT_MAX_RETRIES times on garbage output.
         Returns (reply_text, action_dict | None, error)
         """
         draft = draft or {}
 
-        # ── Draft context ─────────────────────────────────────────────────────
+        # ── Build system prompt contexts ──────────────────────────────────────
         if draft:
             collected = ", ".join(f"{k}: {v}" for k, v in draft.items() if v)
             remaining = [k for k in ("name", "priority", "due_date", "category") if not draft.get(k)]
@@ -408,7 +508,6 @@ class AIGateway:
         else:
             draft_ctx = "Empty — no task being created yet."
 
-        # ── Task stats context ────────────────────────────────────────────────
         if task_stats:
             stats_ctx = (
                 f"total_tasks={task_stats.get('total', 0)}  "
@@ -420,14 +519,12 @@ class AIGateway:
         else:
             stats_ctx = "Task stats unavailable."
 
-        # ── Intent context ────────────────────────────────────────────────────
         intent_name = (intent_info or {}).get("intent", "unclear")
         intent_ctx  = (
             f"Classified intent: {intent_name} — {INTENTS.get(intent_name, '')}\n"
             f"Stick to this intent. Do NOT emit unrelated task actions."
         )
 
-        # ── Location context ──────────────────────────────────────────────────
         if location:
             loc_ctx = (
                 f"User's location (IP-detected): {location}\n"
@@ -446,41 +543,84 @@ class AIGateway:
             .replace("{location_context}", loc_ctx)
         )
 
-        # Inject location into prompt for weather queries
         needs_web   = (intent_info or {}).get("needs_web", False)
         user_prompt = user_message
         if needs_web and location:
             user_prompt = f"[User location: {location}]\n{user_message}"
 
-        raw, err = self._call(
-            DEEPSHI,
-            f"{system}\n\nUser: {user_prompt}",
-            history=history,
-            timeout=120,
-            enable_thinking=True,
-            session_key="taskflow_chat",
-            web_search=needs_web,          # proxy enriches prompt with search
+        full_prompt = f"{system}\n\nUser: {user_prompt}"
+
+        # ── ✅ Retry loop with validation ─────────────────────────────────────
+        last_err        = None
+        validation_log  = []   # track what went wrong across attempts
+
+        for attempt in range(1, CHAT_MAX_RETRIES + 2):   # +2 → 1 original + N retries
+            raw, err = self._call(
+                DEEPSHI,
+                full_prompt,
+                history=history,
+                timeout=120,
+                enable_thinking=True,
+                session_key="taskflow_chat",
+                web_search=needs_web,
+            )
+
+            if err or not raw:
+                last_err = err or "No response."
+                if attempt <= CHAT_MAX_RETRIES:
+                    time.sleep(CHAT_RETRY_DELAY)
+                    continue
+                return None, None, last_err
+
+            # Run validation pipeline
+            is_valid, fail_reason = self._validate_response(user_message, raw)
+
+            if is_valid:
+                # ── Good response — parse and return ─────────────────────────
+                action, reply = None, raw
+                if ACTION_TAG in raw:
+                    parts      = raw.split(ACTION_TAG, 1)
+                    reply      = parts[0].strip()
+                    action_raw = parts[1].strip()
+                    try:
+                        clean  = action_raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+                        action = json.loads(clean)
+                    except json.JSONDecodeError:
+                        action = None
+
+                if action and intent_name in NO_ACTION_INTENTS:
+                    action = None
+
+                if attempt > 1:
+                    # Append a subtle note so the user knows a retry happened
+                    # (purely informational — won't break anything)
+                    reply = reply  # keep clean, log silently
+                    print(
+                        f"  [validator] attempt {attempt} succeeded "
+                        f"(prev failures: {'; '.join(validation_log)})",
+                        flush=True,
+                    )
+
+                return reply, action, None
+
+            else:
+                # Bad response — log it and retry
+                validation_log.append(f"attempt {attempt}: {fail_reason}")
+                print(
+                    f"  [validator] attempt {attempt} FAILED — {fail_reason} — retrying...",
+                    flush=True,
+                )
+                if attempt <= CHAT_MAX_RETRIES:
+                    time.sleep(CHAT_RETRY_DELAY)
+                # On last attempt we'll fall through to the error below
+
+        # All attempts exhausted with bad responses
+        return (
+            None,
+            None,
+            f"AI returned low-quality responses after {CHAT_MAX_RETRIES + 1} attempts. "
+            f"Try again in a moment. (Last issue: {validation_log[-1] if validation_log else 'unknown'})"
         )
-        if err or not raw:
-            return None, None, err or "No response."
-
-        # Split out action block
-        action, reply = None, raw
-        if ACTION_TAG in raw:
-            parts      = raw.split(ACTION_TAG, 1)
-            reply      = parts[0].strip()
-            action_raw = parts[1].strip()
-            try:
-                clean  = action_raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-                action = json.loads(clean)
-            except json.JSONDecodeError:
-                action = None
-
-        # Hard strip: no task actions for non-task intents
-        if action and intent_name in NO_ACTION_INTENTS:
-            action = None
-
-        return reply, action, None
 
     # ── NL Task Parser ───────────────────────────────────────────────────────
 
