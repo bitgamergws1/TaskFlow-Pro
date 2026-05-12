@@ -851,7 +851,10 @@ def chat():
                 ))
 
             if not action:
-                # Fallback: complete_task intent but AI forgot to emit action
+                # ── Intent-based action fallbacks ─────────────────────────
+                # AI gave a text reply but forgot to emit TASKFLOW_ACTION.
+                # Synthesize the correct action based on detected intent.
+
                 if intent_name == "complete_task":
                     fallback_tid = (intent_info.get("entities") or {}).get("task_id", "").strip().upper()
                     if fallback_tid:
@@ -863,6 +866,44 @@ def chat():
                         else:
                             console.print(f"  [red]{err_fb}[/red]\n")
                         continue
+
+                elif intent_name == "list_tasks":
+                    tasks = ctrl.list_tasks()
+                    if not tasks:
+                        console.print("  [dim]No tasks found.[/dim]\n")
+                    else:
+                        console.print(_task_table(tasks, f"Tasks ({len(tasks)})"))
+                    console.print()
+                    continue
+
+                elif intent_name == "search_tasks":
+                    kw = (intent_info.get("entities") or {}).get("keyword", "").strip()
+                    tasks = ctrl.list_tasks(search=kw) if kw else ctrl.list_tasks()
+                    if not tasks:
+                        console.print("  [dim]No tasks found.[/dim]\n")
+                    else:
+                        console.print(_task_table(tasks, f"Search ({len(tasks)})"))
+                    console.print()
+                    continue
+
+                elif intent_name == "analytics":
+                    s  = ctrl.get_analytics()
+                    pc = "green" if s["productivity"] >= 70 else "yellow" if s["productivity"] >= 40 else "red"
+                    console.print(Panel(
+                        f"  [dim]Total[/dim]     [white]{s['total']}[/white]   "
+                        f"[dim]Done[/dim] [green]{s['completed']}[/green]   "
+                        f"[dim]Pending[/dim] [yellow]{s['pending']}[/yellow]   "
+                        f"[dim]Overdue[/dim] [red]{s['overdue']}[/red]   "
+                        f"[dim]Rate[/dim] [{pc}]{s['productivity']}%[/{pc}]   "
+                        f"[dim]Streak[/dim] [white]{s['streak']}d[/white]",
+                        title="[dim]Analytics[/dim]", border_style="dim", padding=(0, 1),
+                    ))
+                    if s.get("by_status"):   _bar_chart(s["by_status"],   "Status")
+                    if s.get("by_priority"): _bar_chart(s["by_priority"], "Priority")
+                    if s.get("by_category"): _bar_chart(s["by_category"], "Category")
+                    console.print()
+                    continue
+
                 console.print()
                 continue
 
