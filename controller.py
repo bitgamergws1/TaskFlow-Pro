@@ -209,6 +209,16 @@ class TaskController:
                 return "error", None, "Task ID required.", draft
             ok, err = self.complete_task(tid)
             if not ok:
+                # AI may have sent task name instead of ID — fuzzy fallback
+                matches = self.db.get_tasks(search=tid, status="pending") if tid else []
+                if not matches:
+                    # also try lowercase original (before .upper())
+                    raw_tid = str(data.get("task_id", "")).strip()
+                    matches = self.db.get_tasks(search=raw_tid, status="pending")
+                if matches:
+                    tid = matches[0]["id"]
+                    ok, err = self.complete_task(tid)
+            if not ok:
                 return "error", None, err, draft
             task, _ = self.get_task(tid)
             return "task_completed", task, None, draft
