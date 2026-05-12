@@ -7,52 +7,67 @@ import requests
 from datetime import date
 
 PROXY_URL = "https://devnest-proxy-server.onrender.com/v1/proxy/ai"
-HEADERS = {
+HEADERS   = {
     "X-DevNest-Token": "DEVNEST_EVAL_2026",
-    "Content-Type": "application/json",
+    "Content-Type":    "application/json",
 }
 
-EXPIRY = date(2026, 5, 20)
-
+EXPIRY  = date(2026, 5, 20)
 CLAUDE  = "claude-haiku-4-5-20251001"
 DEEPSHI = "deepshi-r2"
 
-# ── Action delimiter the AI uses to signal a task operation ───────────────────
 ACTION_TAG = "TASKFLOW_ACTION:"
 
-CHAT_SYSTEM = """You are TaskFlow AI — a smart, witty productivity assistant embedded in a terminal task manager.
+CHAT_SYSTEM = """You are TaskFlow AI — a sharp, no-filler productivity assistant inside a terminal task manager.
 
-You help users manage their tasks through natural conversation. You can:
-- Create tasks (ask for name, priority, due date, category if not given)
-- Search and list tasks
-- Edit tasks (ask which field to change)
-- Complete or delete tasks
-- Show analytics
-- Answer productivity questions
+TODAY: {today}
 
-When you need to perform a task operation, append a JSON action block at the very end of your response using this exact format (no extra text after it):
+=== LANGUAGE RULE (CRITICAL) ===
+Detect the language/style of each user message and reply in the EXACT same language.
+- English only → English only
+- Hindi (Devanagari) → Hindi
+- Hinglish (Hindi words in Roman script) → Hinglish
+- Mix → match their mix
+Never switch language on your own.
+
+=== CURRENT TASK DRAFT ===
+{draft_context}
+
+=== DRAFT RULES ===
+- DO NOT ask again for fields already in the draft above.
+- Ask for missing fields 1-2 at a time. Don't dump all questions at once.
+- If user switches topic mid-creation: answer them, then gently remind about the unfinished task.
+- Once you have at least the NAME, you may apply defaults (priority: Medium, category: General) and confirm.
+- Emit "update_draft" whenever user gives any task field, even partially.
+- Emit "confirm_task" to show preview BEFORE saving when all fields are ready.
+- Emit "create_task" only after user confirms the preview or clearly says to save.
+- Emit "clear_draft" if user explicitly abandons the current task.
+
+=== OTHER ACTIONS ===
+search_tasks | list_tasks | edit_task | complete_task | delete_task | show_analytics
+
+=== ACTION FORMAT ===
+Append exactly ONE JSON block at the very END of your reply — nothing after it:
 
 TASKFLOW_ACTION:{"action":"ACTION_NAME","data":{...}}
 
-Available actions and their data fields:
-  create_task   → data: {name, priority, due_date, category, notes}
-  search_tasks  → data: {query}
-  list_tasks    → data: {status?, category?, priority?}
-  edit_task     → data: {task_id, updates:{field:value,...}}
-  complete_task → data: {task_id}
-  delete_task   → data: {task_id}
-  show_analytics→ data: {}
+Action reference:
+  update_draft   → data: {name?, priority?, due_date?, category?, notes?}
+  confirm_task   → data: full task fields to preview (shows confirm prompt to user)
+  create_task    → data: {name, priority, due_date, category, notes?}
+  clear_draft    → data: {}
+  search_tasks   → data: {query}
+  list_tasks     → data: {status?, category?, priority?}
+  edit_task      → data: {task_id, updates:{field:value,...}}
+  complete_task  → data: {task_id}
+  delete_task    → data: {task_id}
+  show_analytics → data: {}
 
-Rules:
-- Be conversational and sharp. No corporate filler.
-- If info is missing (e.g. no priority given), use sensible defaults (Medium) and mention it.
-- For edit/complete/delete, ALWAYS ask for task ID if not provided before emitting the action.
-- Never emit an action if you are still asking the user a question.
-- Keep replies short — 1 to 3 sentences max unless explaining something complex.
-- Today's date: {today}
-
-Priority values: High | Medium | Low
-Category values: Work | Study | Personal | Health | Finance | General"""
+=== STYLE ===
+- 1-2 sentences unless explaining something complex.
+- No "Certainly!", "Of course!", "Great!", "Sure thing!".
+- Be direct and human. Just help.
+"""
 
 
 class AIGateway:
@@ -64,141 +79,115 @@ class AIGateway:
         if self._expired():
             return None, "Evaluation period ended."
         try:
-            payload = {
-                "model":   model,
-                "prompt":  prompt,
-                "history": (history or [])[-10:],
-            }
-            resp = requests.post(PROXY_URL, json=payload, headers=HEADERS, timeout=timeout)
+            resp = requests.post(
+                PROXY_URL,
+                json={"model": model, "prompt": prompt, "history": (history or [])[-12:]},
+                headers=HEADERS,
+                timeout=timeout,
+            )
             if resp.status_code != 200:
-                return None, f"Proxy returned HTTP {resp.status_code}."
+                return None, f"Proxy error HTTP {resp.status_code}."
             data = resp.json()
             text = (
-                data.get("response")
-                or data.get("reply")
-                or data.get("content")
-                or data.get("message")
-                or data.get("text")
-                or data.get("output")
+                data.get("response") or data.get("reply") or data.get("content")
+                or data.get("message") or data.get("text") or data.get("output")
             )
             if isinstance(text, list):
                 text = " ".join(str(b.get("text", "")) for b in text if isinstance(b, dict))
             return str(text).strip() if text else None, None
         except requests.exceptions.Timeout:
-            return None, "AI request timed out. Try again."
+            return None, "AI request timed out."
         except requests.exceptions.ConnectionError:
-            return None, "Cannot reach proxy server."
+            return None, "Cannot reach proxy."
         except Exception as e:
             return None, str(e)
 
-    # ── Chat: conversational task assistant ───────────────────────────────────
+    # ── Chat ─────────────────────────────────────────────────────────────────
 
-    def chat(self, user_message, history=None):
+    def chat(self, user_message: str, history=None, draft: dict = None):
         """
-        Send a message to the AI chat assistant.
         Returns (reply_text, action_dict | None, error)
-
-        action_dict example:
-            {"action": "create_task", "data": {"name": "...", "priority": "High", ...}}
+        draft = current partial task being built, e.g. {"name": "Math", "priority": "High"}
         """
-        system = CHAT_SYSTEM.replace("{today}", date.today().isoformat())
-        full_prompt = f"{system}\n\nUser: {user_message}"
+        draft = draft or {}
+        if draft:
+            collected  = ", ".join(f"{k}: {v}" for k, v in draft.items() if v)
+            remaining  = [k for k in ("name", "priority", "due_date", "category") if not draft.get(k)]
+            draft_ctx  = (
+                f"Already collected → {collected}\n"
+                f"Still missing     → {', '.join(remaining) if remaining else 'nothing (all set, ready to confirm)'}"
+            )
+        else:
+            draft_ctx = "Empty — no task being created yet."
 
-        raw, err = self._call(CLAUDE, full_prompt, history=history, timeout=45)
+        system = (
+            CHAT_SYSTEM
+            .replace("{today}",        date.today().isoformat())
+            .replace("{draft_context}", draft_ctx)
+        )
+        raw, err = self._call(CLAUDE, f"{system}\n\nUser: {user_message}", history=history, timeout=50)
         if err or not raw:
-            return None, None, err or "No response from AI."
+            return None, None, err or "No response."
 
-        # Split reply from action block
-        action = None
-        reply  = raw
-
+        action, reply = None, raw
         if ACTION_TAG in raw:
             parts      = raw.split(ACTION_TAG, 1)
             reply      = parts[0].strip()
-            action_str = parts[1].strip()
+            action_raw = parts[1].strip()
             try:
-                clean = action_str.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+                clean  = action_raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
                 action = json.loads(clean)
             except json.JSONDecodeError:
-                action = None  # bad JSON → treat as plain reply
+                action = None
 
         return reply, action, None
 
-    # ── Claude: Natural Language Task Parser ──────────────────────────────────
+    # ── NL Task Parser ───────────────────────────────────────────────────────
 
-    def parse_task(self, natural_text):
-        prompt = f"""Parse this task description and return ONLY a valid JSON object. No explanation, no markdown.
-
-Fields:
-- name (string): concise task title
-- priority (string): High | Medium | Low
-- due_date (string): YYYY-MM-DD or null
-- category (string): Work | Study | Personal | Health | Finance | General
-- notes (string): extra context or null
-
-Input: "{natural_text}"
-
-JSON only:"""
-
+    def parse_task(self, text: str):
+        prompt = (
+            f'Parse this task. Return ONLY a JSON object, no markdown.\n'
+            f'Fields: name (str), priority (High|Medium|Low), due_date (YYYY-MM-DD|null), '
+            f'category (Work|Study|Personal|Health|Finance|General), notes (str|null)\n\n'
+            f'Input: "{text}"\nJSON:'
+        )
         result, err = self._call(CLAUDE, prompt, timeout=30)
         if err or not result:
-            return None, err or "No response from AI."
+            return None, err or "No response."
         try:
             clean = result.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
             return json.loads(clean), None
         except json.JSONDecodeError:
-            return None, f"Could not parse AI response: {result[:100]}"
+            return None, f"Parse error: {result[:80]}"
 
-    # ── Deepshi R2: Full Day Schedule Optimizer ───────────────────────────────
+    # ── Schedule Optimizer ───────────────────────────────────────────────────
 
     def optimize_schedule(self, tasks):
         if not tasks:
-            return None, "No pending tasks to optimize."
-
-        task_lines = "\n".join(
-            f"  [{t['priority']}] {t['name']} | Due: {t.get('due_date') or 'flexible'} | {t.get('category', 'General')}"
+            return None, "No pending tasks."
+        lines = "\n".join(
+            f"  [{t['priority']}] {t['name']} | Due: {t.get('due_date') or 'flexible'} | {t.get('category','General')}"
             for t in tasks
         )
-
-        prompt = f"""You are a productivity expert. Build a focused time-blocked schedule for today using these pending tasks:
-
-{task_lines}
-
-Rules:
-- Working hours: 9:00 AM to 9:00 PM
-- High priority tasks first, then Medium, then Low
-- Group tasks by category when possible
-- Include a 15-min break every 90 minutes
-- Use 25-min Pomodoro blocks for deep work tasks
-- Be realistic — do not cram everything in
-
-Format every block exactly like this (one per line):
-⏰ HH:MM AM - HH:MM AM | Task Name | [Priority] | Category
-
-End with a single motivational line starting with 💡"""
-
+        prompt = (
+            f"Productivity expert. Build a focused time-blocked schedule for today.\n\n"
+            f"Tasks:\n{lines}\n\n"
+            f"Rules: 9AM-9PM, High priority first, group by category, 15-min break every 90min, "
+            f"25-min Pomodoro blocks, realistic pacing.\n\n"
+            f"Format each block: HH:MM - HH:MM | Task | [Priority] | Category\n"
+            f"End with one line starting with >>"
+        )
         return self._call(DEEPSHI, prompt, timeout=90)
 
-    # ── Deepshi R2: Daily Motivation / Roast ──────────────────────────────────
+    # ── Motivation ───────────────────────────────────────────────────────────
 
-    def get_motivation(self, stats):
-        p  = stats.get("productivity", 0)
-        c  = stats.get("completed", 0)
-        pn = stats.get("pending", 0)
-        ov = stats.get("overdue", 0)
-        sk = stats.get("streak", 0)
-
-        tone = "savage roast + kick" if p < 30 else ("powerful praise + energy" if p >= 70 else "balanced push")
-
-        prompt = f"""You are a sharp productivity coach. Give a 3-4 line daily message in this tone: {tone}.
-
-Today's stats:
-- Completed tasks: {c}
-- Pending tasks: {pn}
-- Overdue tasks: {ov}
-- Productivity rate: {p}%
-- Day streak: {sk} days
-
-Be direct, witty, specific to the numbers. No filler. No corporate speak. End with a power line."""
-
+    def get_motivation(self, stats: dict):
+        p    = stats.get("productivity", 0)
+        tone = "savage roast" if p < 30 else ("strong praise" if p >= 70 else "balanced push")
+        prompt = (
+            f"Productivity coach. 3-4 lines. Tone: {tone}.\n"
+            f"Stats: {stats.get('completed')} done, {stats.get('pending')} pending, "
+            f"{stats.get('overdue')} overdue, {p}% rate, {stats.get('streak')}-day streak.\n"
+            f"Direct, witty, specific. No filler. End with one punchy line."
+        )
         return self._call(DEEPSHI, prompt, timeout=30)
