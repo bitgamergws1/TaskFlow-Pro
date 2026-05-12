@@ -84,11 +84,25 @@ class TaskController:
     def get_analytics(self):
         return self.db.get_analytics()
 
+    # ── Intent Classification ─────────────────────────────────────────────────
+
+    def classify_intent(self, user_message: str, history=None) -> dict:
+        """
+        Fast Haiku call to detect user intent before the main AI response.
+        Returns dict: {intent, entities, status_msg, label}
+        Never raises — falls back to 'unclear' silently.
+        """
+        return self.ai.classify_intent(user_message, history=history)
+
+    def validate_action(self, intent: str, action_name: str | None) -> tuple[bool, str]:
+        """Check if AI's triggered action matches the classified intent."""
+        return self.ai.validate_action(intent, action_name)
+
     # ── AI Chat ───────────────────────────────────────────────────────────────
 
-    def chat(self, user_message: str, history=None, draft: dict = None):
+    def chat(self, user_message: str, history=None, draft: dict = None, intent_info: dict = None):
         """Returns (reply, action, error)."""
-        return self.ai.chat(user_message, history=history, draft=draft)
+        return self.ai.chat(user_message, history=history, draft=draft, intent_info=intent_info)
 
     def handle_chat_action(self, action_dict: dict, current_draft: dict = None):
         """
@@ -118,7 +132,6 @@ class TaskController:
 
         # ── confirm_task (preview before save) ────────────────────────────────
         elif action == "confirm_task":
-            # Merge current draft with what AI suggests
             preview = {**draft, **{k: v for k, v in data.items() if v}}
             preview.setdefault("priority", "Medium")
             preview.setdefault("category", "General")
@@ -138,7 +151,7 @@ class TaskController:
                 notes=merged.get("notes"),
             )
             task, _ = self.get_task(task_id)
-            return "task_created", task, None, {}   # clear draft on success
+            return "task_created", task, None, {}
 
         # ── search_tasks ──────────────────────────────────────────────────────
         elif action == "search_tasks":
