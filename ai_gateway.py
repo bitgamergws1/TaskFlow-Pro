@@ -3,6 +3,7 @@ ai_gateway.py — Multi-Model AI Routing via DevNest Proxy
 """
 
 import json
+import re
 import requests
 from datetime import date
 
@@ -75,6 +76,87 @@ class AIGateway:
     def _expired(self):
         return date.today() > EXPIRY
 
+    # ── Block parser ─────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _extract_text(raw) -> str | None:
+        """
+        Pull clean reply text out of whatever the proxy returns.
+        Handles: plain str | JSON array string | concatenated JSON objects |
+                 list of content blocks (reasoning / text).
+        Thinking / reasoning blocks are silently skipped; only 'text' blocks
+        are kept.  Falls back to reasoning content when no text block exists
+        (e.g. get_motivation where the model puts everything in <thinking>).
+        """
+        if not raw:
+            return None
+
+        # ── Already a Python list ─────────────────────────────────────────
+        if isinstance(raw, list):
+            text_parts = [
+                b.get("text", "")
+                for b in raw
+                if isinstance(b, dict) and b.get("type") == "text"
+            ]
+            result = " ".join(text_parts).strip()
+            if not result:                        # fallback to reasoning
+                result = " ".join(
+                    b.get("content", b.get("text", ""))
+                    for b in raw
+                    if isinstance(b, dict) and b.get("type") in ("reasoning", "thinking")
+                ).strip()
+            return result or None
+
+        raw = str(raw).strip()
+
+        # ── JSON array string ─────────────────────────────────────────────
+        if raw.startswith("["):
+            try:
+                blocks = json.loads(raw)
+                return AIGateway._extract_text(blocks)   # recurse with list
+            except json.JSONDecodeError:
+                pass
+
+        # ── Single JSON object ────────────────────────────────────────────
+        if raw.startswith("{"):
+            try:
+                block = json.loads(raw)
+                if block.get("type") == "text":
+                    return block.get("text", "").strip() or None
+                if block.get("type") in ("reasoning", "thinking"):
+                    return (block.get("content") or block.get("text") or "").strip() or None
+            except json.JSONDecodeError:
+                pass
+
+        # ── Concatenated JSON objects (proxy quirk) ───────────────────────
+        # e.g.  {"type":"reasoning","content":"..."} {"type":"text","text":"..."}
+        text_match = re.search(
+            r'"type"\s*:\s*"text".*?"text"\s*:\s*"((?:[^"\\]|\\.)*)"',
+            raw, re.DOTALL
+        )
+        if text_match:
+            return text_match.group(1).replace('\\"', '"').replace("\\n", "\n").strip()
+
+        reasoning_match = re.search(
+            r'"type"\s*:\s*"(?:reasoning|thinking)".*?"(?:content|text)"\s*:\s*"((?:[^"\\]|\\.)*)"',
+            raw, re.DOTALL
+        )
+        if reasoning_match:
+            return reasoning_match.group(1).replace('\\"', '"').replace("\\n", "\n").strip()
+
+        # ── Plain text (no blocks) ────────────────────────────────────────
+        return raw or None
+
+    # ── Proxy error detector ─────────────────────────────────────────────────
+
+    _PROXY_ERR_MARKERS = ("too slow", "timed out", "provider", "⚠", "error:", "unavailable")
+
+    def _is_proxy_error(self, text: str) -> bool:
+        lo = text.lower()
+        return any(m in lo for m in self._PROXY_ERR_MARKERS)
+
+    # ── Core call ────────────────────────────────────────────────────────────
+
     def _call(self, model, prompt, history=None, timeout=75, **extra):
         if self._expired():
             return None, "Evaluation period ended."
@@ -89,15 +171,21 @@ class AIGateway:
             if resp.status_code != 200:
                 return None, f"Proxy error HTTP {resp.status_code}."
             data = resp.json()
-            text = (
+
+            raw = (
                 data.get("response") or data.get("reply") or data.get("content")
                 or data.get("message") or data.get("text") or data.get("output")
             )
-            if isinstance(text, list):
-                text = " ".join(str(b.get("text", "")) for b in text if isinstance(b, dict))
-            return str(text).strip() if text else None, None
+            text = self._extract_text(raw)
+
+            # Proxy sometimes returns an error sentence instead of AI output
+            if text and self._is_proxy_error(text):
+                return None, "AI is taking too long. Please try again in a moment."
+
+            return text, None
+
         except requests.exceptions.Timeout:
-            return None, "AI request timed out."
+            return None, "AI is thinking too long — try again in a moment."
         except requests.exceptions.ConnectionError:
             return None, "Cannot reach proxy."
         except Exception as e:
@@ -132,7 +220,7 @@ class AIGateway:
             DEEPSHI,
             f"{system}\n\nUser: {user_message}",
             history=history,
-            timeout=90,                      # thinking needs more time
+            timeout=120,                     # Deepshi R2 can think 40-80s
             enable_thinking=True,
             session_key="taskflow_chat",
         )
@@ -187,7 +275,7 @@ class AIGateway:
             f"Format each block: HH:MM - HH:MM | Task | [Priority] | Category\n"
             f"End with one line starting with >>"
         )
-        return self._call(DEEPSHI, prompt, timeout=90)
+        return self._call(DEEPSHI, prompt, timeout=120)
 
     # ── Motivation ───────────────────────────────────────────────────────────
 
@@ -200,4 +288,4 @@ class AIGateway:
             f"{stats.get('overdue')} overdue, {p}% rate, {stats.get('streak')}-day streak.\n"
             f"Direct, witty, specific. No filler. End with one punchy line."
         )
-        return self._call(DEEPSHI, prompt, timeout=30)
+        return self._call(DEEPSHI, prompt, timeout=60)
