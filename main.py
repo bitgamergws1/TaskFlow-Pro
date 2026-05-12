@@ -713,10 +713,20 @@ def chat():
         # ══════════════════════════════════════════════════════════════════
         # ── Step 1: Intent Classification (fast Haiku, ~2-4s) ────────────
         # ══════════════════════════════════════════════════════════════════
+        enhanced_input = user_input
+        if history or draft:   # only worth it when there's context to resolve against
+            with console.status("[dim]Clarifying your message...[/dim]", spinner="dots"):
+                enhanced_input = ctrl.enhance_prompt(user_input, history=history, draft=draft)
+            # Show the enhanced version only if it actually changed
+            if enhanced_input != user_input:
+             console.print(f"  [dim]→ {enhanced_input}[/dim]")
+             # ══════════════════════════════════════════════════════════════════
+# ── Step 1: Intent Classification  ────────────
+# ══════════════════════════════════════════════════════════════════
         intent_info = {"intent": "unclear", "status_msg": "Processing your request...", "label": ""}
-
+ 
         with console.status("[dim]Understanding your intent...[/dim]", spinner="dots"):
-            intent_info = ctrl.classify_intent(user_input, history=history)
+            intent_info = ctrl.classify_intent(enhanced_input, history=history)
 
         intent_name  = intent_info.get("intent", "unclear")
         intent_label = intent_info.get("label", "")
@@ -737,7 +747,7 @@ def chat():
             spinner="dots",
         ):
             reply, action, err = ctrl.chat(
-                user_input,
+                enhanced_input,          # ← enhanced, not raw user_input
                 history=history,
                 draft=draft,
                 intent_info=intent_info,
@@ -754,7 +764,7 @@ def chat():
             continue
 
         # Update history
-        history.append({"role": "user",      "content": user_input})
+        history.append({"role": "user",      "content": user_input}) 
         history.append({"role": "assistant", "content": reply or ""})
         if len(history) > 20:
             history = history[-20:]
@@ -857,6 +867,8 @@ def chat():
 
         elif result_type == "draft_cleared":
             console.print("  [dim]Draft cleared.[/dim]\n")
+        elif result_type == "passthrough":
+            pass
 
 
 # ── optimize ──────────────────────────────────────────────────────────────────
