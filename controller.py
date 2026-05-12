@@ -6,6 +6,13 @@ from datetime import date
 from database import Database
 from ai_gateway import AIGateway
 
+# Actions the AI might return that are valid "no-op" responses
+# (AI replied with text only, no real task action needed)
+_SOFT_PASSTHROUGH_ACTIONS = {
+    "general_response", "general_answer", "reply", "text_response",
+    "no_action", "none", "chitchat_response", "answer",
+}
+
 
 class TaskController:
     def __init__(self):
@@ -93,6 +100,17 @@ class TaskController:
     def validate_action(self, intent: str, action_name: str | None) -> tuple[bool, str]:
         return self.ai.validate_action(intent, action_name)
 
+    # ── ✅ NEW: Prompt Enhancer ───────────────────────────────────────────────
+
+    def enhance_prompt(self, user_message: str, history=None, draft=None) -> str:
+        """
+        Clarifies the user's message using conversation history before it
+        hits the classifier. Resolves pronouns, follow-up shortcuts, and
+        ambiguous references to tasks.
+        Returns enhanced message string (original on failure).
+        """
+        return self.ai.enhance_prompt(user_message, history=history, draft=draft)
+
     # ── AI Chat ───────────────────────────────────────────────────────────────
 
     def chat(
@@ -107,7 +125,7 @@ class TaskController:
         Returns (reply, action, error).
         Automatically fetches task_stats from DB and passes to AI.
         """
-        task_stats = self.db.get_analytics()   # always fresh, cheap SQLite read
+        task_stats = self.db.get_analytics()
         return self.ai.chat(
             user_message,
             history=history,
@@ -128,6 +146,12 @@ class TaskController:
         action = action_dict.get("action", "")
         data   = action_dict.get("data", {})
         draft  = dict(current_draft or {})
+
+        # ── ✅ Soft passthrough: AI returned a "reply-only" pseudo-action ─────
+        # These are not real task actions — AI just gave a conversational answer
+        # and tagged it with a non-standard action name. Treat as no-op.
+        if action.lower() in _SOFT_PASSTHROUGH_ACTIONS:
+            return "passthrough", None, None, draft
 
         if action == "update_draft":
             draft.update({k: v for k, v in data.items() if v})
@@ -202,7 +226,11 @@ class TaskController:
             return "analytics", self.get_analytics(), None, draft
 
         else:
-            return "error", None, f"Unknown action: '{action}'", draft
+            # ── Unknown action: log silently, treat as passthrough ────────────
+            # Don't show "Unknown action" error to user — AI already gave a
+            # text reply above; just skip the action dispatch quietly.
+            print(f"  [controller] unknown action '{action}' — skipping silently", flush=True)
+            return "passthrough", None, None, draft
 
     # ── AI Features ───────────────────────────────────────────────────────────
 
