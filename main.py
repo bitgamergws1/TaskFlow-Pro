@@ -660,7 +660,7 @@ def chat():
             continue
 
         # ── AI turn ────────────────────────────────────────────────────────
-        with console.status("[dim]...[/dim]", spinner="dots"):
+        with console.status("[dim]thinking...[/dim]", spinner="dots"):
             reply, action, err = ctrl.chat(user_input, history=history, draft=draft)
 
         if err:
