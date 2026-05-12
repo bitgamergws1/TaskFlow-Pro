@@ -75,16 +75,17 @@ class AIGateway:
     def _expired(self):
         return date.today() > EXPIRY
 
-    def _call(self, model, prompt, history=None, timeout=75):
+    def _call(self, model, prompt, history=None, timeout=75, **extra):
         if self._expired():
             return None, "Evaluation period ended."
         try:
-            resp = requests.post(
-                PROXY_URL,
-                json={"model": model, "prompt": prompt, "history": (history or [])[-12:]},
-                headers=HEADERS,
-                timeout=timeout,
-            )
+            payload = {
+                "model":   model,
+                "prompt":  prompt,
+                "history": (history or [])[-12:],
+                **extra,          # e.g. enable_thinking, session_key
+            }
+            resp = requests.post(PROXY_URL, json=payload, headers=HEADERS, timeout=timeout)
             if resp.status_code != 200:
                 return None, f"Proxy error HTTP {resp.status_code}."
             data = resp.json()
@@ -106,8 +107,9 @@ class AIGateway:
 
     def chat(self, user_message: str, history=None, draft: dict = None):
         """
+        Uses Deepshi R2 with thinking enabled — better context retention,
+        no hallucination, remembers full conversation + draft state.
         Returns (reply_text, action_dict | None, error)
-        draft = current partial task being built, e.g. {"name": "Math", "priority": "High"}
         """
         draft = draft or {}
         if draft:
@@ -122,10 +124,18 @@ class AIGateway:
 
         system = (
             CHAT_SYSTEM
-            .replace("{today}",        date.today().isoformat())
+            .replace("{today}",         date.today().isoformat())
             .replace("{draft_context}", draft_ctx)
         )
-        raw, err = self._call(CLAUDE, f"{system}\n\nUser: {user_message}", history=history, timeout=50)
+
+        raw, err = self._call(
+            DEEPSHI,
+            f"{system}\n\nUser: {user_message}",
+            history=history,
+            timeout=90,                      # thinking needs more time
+            enable_thinking=True,
+            session_key="taskflow_chat",
+        )
         if err or not raw:
             return None, None, err or "No response."
 
