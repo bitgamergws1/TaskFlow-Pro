@@ -405,14 +405,24 @@ class AIGateway:
         Stage 1: fast heuristics (no API call)
         Stage 2: Haiku judge (only if Stage 1 passes)
         Returns (is_valid, failure_reason)
+
+        IMPORTANT: strips TASKFLOW_ACTION tag before any check — the judge must
+        only see the user-facing reply text, not the internal action protocol JSON.
         """
-        # Stage 1 — instant rules
-        fast_ok, fast_reason = self._fast_validate(raw_reply)
+        # Strip action tag — judge should never see the internal JSON protocol
+        reply_for_validation = (
+            raw_reply.split(ACTION_TAG, 1)[0].strip()
+            if ACTION_TAG in raw_reply
+            else raw_reply
+        )
+
+        # Stage 1 — instant rules (on clean text)
+        fast_ok, fast_reason = self._fast_validate(reply_for_validation)
         if not fast_ok:
             return False, f"[fast-check] {fast_reason}"
 
-        # Stage 2 — AI judge
-        judge_ok, score, judge_reason = self._judge_response(user_msg, raw_reply)
+        # Stage 2 — AI judge (on clean text, never sees action JSON)
+        judge_ok, score, judge_reason = self._judge_response(user_msg, reply_for_validation)
         if not judge_ok:
             return False, f"[judge score={score}] {judge_reason}"
 
