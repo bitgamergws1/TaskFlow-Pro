@@ -32,6 +32,20 @@ VALID_CATEGORIES  = ["Work", "Study", "Personal", "Health", "Finance", "General"
 
 CITY_FILE = os.path.join(os.path.expanduser("~"), ".taskflow_city")
 
+# Intent display labels for the chat UI
+INTENT_ICONS = {
+    "create_task":   ("✚", "cyan",    "Creating task"),
+    "list_tasks":    ("≡", "white",   "Listing tasks"),
+    "search_tasks":  ("⌕", "white",   "Searching tasks"),
+    "complete_task": ("✓", "green",   "Completing task"),
+    "delete_task":   ("✗", "red",     "Deleting task"),
+    "edit_task":     ("✎", "yellow",  "Editing task"),
+    "analytics":     ("◈", "cyan",    "Showing analytics"),
+    "optimize":      ("⚡", "yellow", "Optimizing schedule"),
+    "chitchat":      ("◦", "dim",     ""),
+    "unclear":       ("◦", "dim",     ""),
+}
+
 BANNER = """
   ╔══════════════════════════════════════════════════════════════════════════╗
   ║  ████████╗ █████╗ ███████╗██╗  ██╗    ███████╗██╗      ██████╗ ██╗    ██╗ ║
@@ -125,7 +139,6 @@ def _fetch_weather(city: str) -> dict | None:
 
 
 def _get_weather_async():
-    """Returns weather dict or None, using stored city or IP detection."""
     city = _load_city()
     if not city:
         city = _detect_city_from_ip()
@@ -223,12 +236,10 @@ def _show_dashboard():
     ctrl = _get_ctrl()
     _print_banner()
 
-    # Ping proxy early so Render's AI backend warms up in background
     import threading as _t
     from ai_gateway import AIGateway as _AIGateway
     _t.Thread(target=_AIGateway.wake_up, daemon=True).start()
 
-    # Fetch weather in background
     weather_result = [None]
     def _weather_thread():
         weather_result[0] = _get_weather_async()
@@ -238,7 +249,6 @@ def _show_dashboard():
     stats = ctrl.get_analytics()
     tasks = ctrl.list_tasks()
 
-    # ── Stats row ──────────────────────────────────────────────────────────
     pc     = "green" if stats["productivity"] >= 70 else "yellow" if stats["productivity"] >= 40 else "red"
     streak = f"  {stats['streak']}d 🔥" if stats["streak"] >= 3 else f"  {stats['streak']}d"
     stat_panels = [
@@ -251,7 +261,6 @@ def _show_dashboard():
     ]
     console.print(Columns(stat_panels))
 
-    # ── Weather (wait up to 3s) ────────────────────────────────────────────
     wt.join(timeout=3)
     wx = weather_result[0]
     if wx:
@@ -266,7 +275,6 @@ def _show_dashboard():
 
     console.print()
 
-    # ── Task table ─────────────────────────────────────────────────────────
     if tasks:
         tbl = _task_table(tasks[:12], f"Tasks  ({len(tasks)} total)")
         console.print(tbl)
@@ -278,7 +286,6 @@ def _show_dashboard():
             border_style="dim",
         ))
 
-    # ── AI motivation — loads in background, tips animate meanwhile ────────
     console.print()
     TIPS = [
         "💡  Break big tasks into 25-min Pomodoro blocks — use [white]taskflow focus <ID>[/white]",
@@ -572,8 +579,8 @@ def weather(city):
 def chat():
     """AI chat -- create, search, edit tasks through natural conversation."""
     ctrl    = _get_ctrl()
-    history = []   # [{role, content}]
-    draft   = {}   # partial task being built: {name, priority, due_date, category, notes}
+    history = []
+    draft   = {}
 
     console.print(Panel(
         "[bold white]TaskFlow AI Chat[/bold white]\n\n"
@@ -593,15 +600,14 @@ def chat():
             console.print()
 
     def _handle_slash(cmd: str) -> bool:
-        """Handle slash commands. Returns True if handled, None to exit."""
         nonlocal draft
         parts = cmd.strip().split(None, 1)
-        slash = parts[0].lower()          # already has no leading /
+        slash = parts[0].lower()
         arg   = parts[1].strip() if len(parts) > 1 else ""
 
         if slash in ("exit", "quit", "q"):
             console.print("  [dim]Chat closed.[/dim]")
-            return None   # signal to exit loop
+            return None
 
         elif slash == "help":
             console.print(SLASH_HELP)
@@ -614,7 +620,6 @@ def chat():
             console.print("  [dim]Draft cleared.[/dim]\n")
 
         elif slash == "list":
-            # /list pending | /list Work | /list
             status_map = {"pending": "pending", "done": "completed", "completed": "completed"}
             cat_map    = {c.lower(): c for c in VALID_CATEGORIES}
             s = c = None
@@ -700,14 +705,43 @@ def chat():
 
         # ── Slash command? ─────────────────────────────────────────────────
         if user_input.startswith("/"):
-            result = _handle_slash(user_input[1:])   # strip the leading /
-            if result is None:   # exit signal
+            result = _handle_slash(user_input[1:])
+            if result is None:
                 break
             continue
 
-        # ── AI turn ────────────────────────────────────────────────────────
-        with console.status("[dim]Thinking... (30–90s, auto-retries on slow start)[/dim]", spinner="dots"):
-            reply, action, err = ctrl.chat(user_input, history=history, draft=draft)
+        # ══════════════════════════════════════════════════════════════════
+        # ── Step 1: Intent Classification (fast Haiku, ~2-4s) ────────────
+        # ══════════════════════════════════════════════════════════════════
+        intent_info = {"intent": "unclear", "status_msg": "Processing your request...", "label": ""}
+
+        with console.status("[dim]Understanding your intent...[/dim]", spinner="dots"):
+            intent_info = ctrl.classify_intent(user_input, history=history)
+
+        intent_name  = intent_info.get("intent", "unclear")
+        intent_label = intent_info.get("label", "")
+        icon, color, display = INTENT_ICONS.get(intent_name, ("◦", "dim", ""))
+
+        # Show detected intent (skip for chitchat/unclear to keep it clean)
+        if intent_name not in ("chitchat", "unclear") and display:
+            console.print(
+                f"  [dim]{icon}[/dim] [dim]Detected:[/dim] [{color}]{display}[/{color}]"
+            )
+
+        # ══════════════════════════════════════════════════════════════════
+        # ── Step 2: Main AI call with intent-aware loading ────────────────
+        # ══════════════════════════════════════════════════════════════════
+        status_msg = intent_info.get("status_msg", "Thinking...")
+        with console.status(
+            f"[dim]{status_msg}  [white]·[/white]  AI thinking, 30–90s on cold start...[/dim]",
+            spinner="dots",
+        ):
+            reply, action, err = ctrl.chat(
+                user_input,
+                history=history,
+                draft=draft,
+                intent_info=intent_info,
+            )
 
         if err:
             console.print(Panel(
@@ -738,21 +772,37 @@ def chat():
             console.print()
             continue
 
+        # ══════════════════════════════════════════════════════════════════
+        # ── Step 3: Action validation — did AI do what user wanted? ───────
+        # ══════════════════════════════════════════════════════════════════
+        action_name = action.get("action") if action else None
+        is_match, mismatch_msg = ctrl.validate_action(intent_name, action_name)
+
+        if not is_match:
+            # Show a subtle warning — don't block, still dispatch the action
+            console.print(
+                f"  [dim yellow]⚠ Intent mismatch: expected [white]{intent_name}[/white]"
+                f" but AI triggered [white]{action_name}[/white][/dim yellow]"
+            )
+
         # ── Dispatch action ────────────────────────────────────────────────
-        result_type, result_data, action_err, draft = ctrl.handle_chat_action(action, current_draft=draft)
+        result_type, result_data, action_err, draft = ctrl.handle_chat_action(
+            action, current_draft=draft
+        )
 
         if action_err:
             console.print(f"  [red]{action_err}[/red]\n")
             continue
 
+        # ── Render result based on type ────────────────────────────────────
         if result_type == "draft_updated":
-            # Silent — draft is updated, conversation continues
             if draft:
-                collected = "  ".join(f"[dim]{k}[/dim] [white]{v}[/white]" for k, v in draft.items() if v)
-                console.print(f"  [dim]Draft:[/dim] {collected}\n")
+                collected = "  ".join(
+                    f"[dim]{k}[/dim] [white]{v}[/white]" for k, v in draft.items() if v
+                )
+                console.print(f"  [dim]Draft →[/dim] {collected}\n")
 
         elif result_type == "confirm_preview":
-            # AI wants to confirm before saving
             _render_task_card(result_data, title="Preview — save this task?")
             if Confirm.ask("  Save?"):
                 task_id, _ = ctrl.add_manual(
@@ -762,7 +812,7 @@ def chat():
                     due_date=result_data.get("due_date"),
                     notes=result_data.get("notes"),
                 )
-                draft = {}   # clear
+                draft = {}
                 console.print(f"  [green]✓[/green] Saved as [white]{task_id}[/white]\n")
             else:
                 console.print("  [dim]Skipped. Draft kept — keep adding details or /clear to abandon.[/dim]\n")
@@ -776,7 +826,8 @@ def chat():
             if not tasks:
                 console.print("  [dim]No tasks found.[/dim]")
             else:
-                console.print(_task_table(tasks, f"Results ({len(tasks)})"))
+                label = "Search Results" if action_name == "search_tasks" else "Tasks"
+                console.print(_task_table(tasks, f"{label} ({len(tasks)})"))
             console.print()
 
         elif result_type == "task_edited":
@@ -883,7 +934,7 @@ def focus(task_id, minutes):
 
         console.print(Panel(
             f"[bold white]Done![/bold white]\n\n"
-            f"[dim]{task['name']} — {minutes} min focused.[/dim]\n\n"
+                f"[dim]{task['name']} — {minutes} min focused.[/dim]\n\n"
             f"[dim]Take a 5-minute break.[/dim]",
             border_style="dim",
         ))
