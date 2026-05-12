@@ -46,6 +46,67 @@ INTENT_ICONS = {
     "unclear":       ("◦", "dim",     ""),
 }
 
+# ── Live "AI thinking" message pools per intent ───────────────────────────────
+_THINKING_MSGS = {
+    "create_task":   ["Parsing your task details...", "Setting up task fields...", "Almost ready to save..."],
+    "complete_task": ["Finding that task...", "Marking as done...", "Updating your progress..."],
+    "delete_task":   ["Locating the task...", "Preparing to remove...", "Cleaning up your list..."],
+    "edit_task":     ["Reading task details...", "Applying your changes...", "Saving updates..."],
+    "list_tasks":    ["Fetching your tasks...", "Sorting by priority...", "Loading your list..."],
+    "search_tasks":  ["Scanning your tasks...", "Looking for matches...", "Almost there..."],
+    "analytics":     ["Crunching your numbers...", "Calculating productivity...", "Building your stats..."],
+    "optimize":      ["Analysing pending tasks...", "Building your schedule...", "Optimising time blocks..."],
+    "weather":       ["Checking current conditions...", "Fetching weather data...", "Almost ready..."],
+    "general_question": ["Thinking about that...", "Searching my knowledge...", "Putting together an answer..."],
+    "chitchat":      ["Thinking...", "One moment...", "On it..."],
+    "unclear":       ["Understanding your request...", "Working on it...", "Almost there..."],
+}
+_THINKING_GENERIC = ["AI is thinking...", "Processing your request...", "Hold on a moment...",
+                     "Working with your tasks...", "Crafting a response..."]
+
+
+def _live_thinking_call(fn, intent_name: str = "unclear"):
+    """
+    Runs `fn()` in a background thread while showing animated cycling
+    intent-aware messages in the foreground using Rich Live.
+    Returns whatever fn() returns.
+    """
+    msgs   = _THINKING_MSGS.get(intent_name, _THINKING_GENERIC)
+    result = [None]
+    exc    = [None]
+
+    def _worker():
+        try:
+            result[0] = fn()
+        except Exception as e:
+            exc[0] = e
+
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+
+    idx      = 0
+    spinners = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+    spin_i   = 0
+
+    with Live(console=console, refresh_per_second=4, transient=True) as live:
+        while t.is_alive():
+            msg    = msgs[idx % len(msgs)]
+            spin   = spinners[spin_i % len(spinners)]
+            live.update(Panel(
+                f"  [dim]{spin}[/dim]  [white]{msg}[/white]",
+                title="[dim]AI[/dim]", border_style="dim", padding=(0, 1)
+            ))
+            time.sleep(0.25)
+            spin_i += 1
+            if spin_i % 12 == 0:   # advance message every ~3s
+                idx += 1
+
+    t.join()
+    if exc[0]:
+        raise exc[0]
+    return result[0]
+
+
 BANNER = """
   ╔══════════════════════════════════════════════════════════════════════════╗
   ║  ████████╗ █████╗ ███████╗██╗  ██╗    ███████╗██╗      ██████╗ ██╗    ██╗ ║
@@ -711,164 +772,189 @@ def chat():
             continue
 
         # ══════════════════════════════════════════════════════════════════
-        # ── Step 1: Intent Classification (fast Haiku, ~2-4s) ────────────
+        # ── Step 0: Prompt Enhancement (resolve pronouns/shortcuts) ──────
         # ══════════════════════════════════════════════════════════════════
         enhanced_input = user_input
-        if history or draft:   # only worth it when there's context to resolve against
+        if history or draft:
             with console.status("[dim]Clarifying your message...[/dim]", spinner="dots"):
                 enhanced_input = ctrl.enhance_prompt(user_input, history=history, draft=draft)
-            # Show the enhanced version only if it actually changed
             if enhanced_input != user_input:
-             console.print(f"  [dim]→ {enhanced_input}[/dim]")
-             # ══════════════════════════════════════════════════════════════════
-# ── Step 1: Intent Classification  ────────────
-# ══════════════════════════════════════════════════════════════════
-        intent_info = {"intent": "unclear", "status_msg": "Processing your request...", "label": ""}
- 
-        with console.status("[dim]Understanding your intent...[/dim]", spinner="dots"):
-            intent_info = ctrl.classify_intent(enhanced_input, history=history)
+                console.print(f"  [dim]→ {enhanced_input}[/dim]")
 
-        intent_name  = intent_info.get("intent", "unclear")
-        intent_label = intent_info.get("label", "")
-        icon, color, display = INTENT_ICONS.get(intent_name, ("◦", "dim", ""))
+        # ══════════════════════════════════════════════════════════════════
+        # ── Step 1: Multi-Agent Decomposition ────────────────────────────
+        # Splits complex prompts into ordered sub-tasks.
+        # Single intent → 1 item; compound prompt → 2+ items.
+        # ══════════════════════════════════════════════════════════════════
+        with console.status("[dim]Understanding your request...[/dim]", spinner="dots"):
+            sub_tasks = ctrl.ai.decompose_prompt(enhanced_input, history=history)
 
-        # Show detected intent (skip for chitchat/unclear to keep it clean)
-        if intent_name not in ("chitchat", "unclear") and display:
+        if len(sub_tasks) > 1:
             console.print(
-                f"  [dim]{icon}[/dim] [dim]Detected:[/dim] [{color}]{display}[/{color}]"
+                f"  [dim cyan]⚡ {len(sub_tasks)} tasks detected — processing in order[/dim cyan]"
             )
 
         # ══════════════════════════════════════════════════════════════════
-        # ── Step 2: Main AI call with intent-aware loading ────────────────
+        # ── Step 2–4: Process each sub-task ──────────────────────────────
         # ══════════════════════════════════════════════════════════════════
-        status_msg = intent_info.get("status_msg", "Thinking...")
-        with console.status(
-            f"[dim]{status_msg}  [white]·[/white]  AI thinking, 30–90s on cold start...[/dim]",
-            spinner="dots",
-        ):
-            reply, action, err = ctrl.chat(
-                enhanced_input,          # ← enhanced, not raw user_input
-                history=history,
-                draft=draft,
-                intent_info=intent_info,
-            )
+        for task_idx, sub in enumerate(sub_tasks):
+            sub_msg    = sub["sub_message"]
+            sub_intent = sub["intent"]
 
-        if err:
-            console.print(Panel(
-                f"[yellow]⚠  {err}[/yellow]",
-                title="[dim]AI[/dim]",
-                border_style="yellow",
-                padding=(0, 2),
-            ))
-            console.print()
-            continue
+            # Show sub-task header when there are multiple
+            if len(sub_tasks) > 1:
+                console.print(f"\n  [dim]── [{task_idx + 1}/{len(sub_tasks)}][/dim] [white]{sub_msg}[/white]")
 
-        # Update history
-        history.append({"role": "user",      "content": user_input}) 
-        history.append({"role": "assistant", "content": reply or ""})
-        if len(history) > 20:
-            history = history[-20:]
+            # ── Intent Classification ─────────────────────────────────────
+            with console.status("[dim]Classifying intent...[/dim]", spinner="dots"):
+                intent_info = ctrl.classify_intent(sub_msg, history=history)
 
-        # Print AI reply
-        if reply:
-            console.print(Panel(
-                f"[white]{reply}[/white]",
-                title="[dim]AI[/dim]",
-                border_style="dim",
-                padding=(0, 2),
-            ))
+            # Override with decomposer's intent if classifier says "unclear"
+            if intent_info.get("intent") == "unclear" and sub_intent != "unclear":
+                intent_info["intent"] = sub_intent
 
-        if not action:
-            console.print()
-            continue
+            intent_name  = intent_info.get("intent", "unclear")
+            icon, color, display = INTENT_ICONS.get(intent_name, ("◦", "dim", ""))
+            if intent_name not in ("chitchat", "unclear") and display:
+                console.print(f"  [dim]{icon}[/dim] [dim]Detected:[/dim] [{color}]{display}[/{color}]")
 
-        # ══════════════════════════════════════════════════════════════════
-        # ── Step 3: Action validation — did AI do what user wanted? ───────
-        # ══════════════════════════════════════════════════════════════════
-        action_name = action.get("action") if action else None
-        is_match, mismatch_msg = ctrl.validate_action(intent_name, action_name)
-
-        if not is_match:
-            # Show a subtle warning — don't block, still dispatch the action
-            console.print(
-                f"  [dim yellow]⚠ Intent mismatch: expected [white]{intent_name}[/white]"
-                f" but AI triggered [white]{action_name}[/white][/dim yellow]"
-            )
-
-        # ── Dispatch action ────────────────────────────────────────────────
-        result_type, result_data, action_err, draft = ctrl.handle_chat_action(
-            action, current_draft=draft
-        )
-
-        if action_err:
-            console.print(f"  [red]{action_err}[/red]\n")
-            continue
-
-        # ── Render result based on type ────────────────────────────────────
-        if result_type == "draft_updated":
-            if draft:
-                collected = "  ".join(
-                    f"[dim]{k}[/dim] [white]{v}[/white]" for k, v in draft.items() if v
+            # ── Main AI call — live animated thinking display ─────────────
+            def _do_chat(_sub_msg=sub_msg, _intent_info=intent_info):
+                return ctrl.chat(
+                    _sub_msg,
+                    history=history,
+                    draft=draft,
+                    intent_info=_intent_info,
                 )
-                console.print(f"  [dim]Draft →[/dim] {collected}\n")
 
-        elif result_type == "confirm_preview":
-            _render_task_card(result_data, title="Preview — save this task?")
-            if Confirm.ask("  Save?"):
-                task_id, _ = ctrl.add_manual(
-                    name=result_data.get("name"),
-                    category=result_data.get("category", "General"),
-                    priority=result_data.get("priority", "Medium"),
-                    due_date=result_data.get("due_date"),
-                    notes=result_data.get("notes"),
+            reply, action, err = _live_thinking_call(_do_chat, intent_name)
+
+            if err:
+                console.print(Panel(
+                    f"[yellow]⚠  {err}[/yellow]",
+                    title="[dim]AI[/dim]", border_style="yellow", padding=(0, 2),
+                ))
+                console.print()
+                continue
+
+            # Update history (use original user_input for first sub-task only)
+            history.append({"role": "user",      "content": sub_msg})
+            history.append({"role": "assistant", "content": reply or ""})
+            if len(history) > 20:
+                history = history[-20:]
+
+            # Print AI reply
+            if reply:
+                console.print(Panel(
+                    f"[white]{reply}[/white]",
+                    title="[dim]AI[/dim]", border_style="dim", padding=(0, 2),
+                ))
+
+            if not action:
+                # Fallback: complete_task intent but AI forgot to emit action
+                if intent_name == "complete_task":
+                    fallback_tid = (intent_info.get("entities") or {}).get("task_id", "").strip().upper()
+                    if fallback_tid:
+                        ok, err_fb = ctrl.complete_task(fallback_tid)
+                        if ok:
+                            task_fb, _ = ctrl.get_task(fallback_tid)
+                            name_fb = task_fb["name"] if task_fb else fallback_tid
+                            console.print(f"  [green]✓[/green] [dim]{name_fb}[/dim] [white]({fallback_tid})[/white] done.\n")
+                        else:
+                            console.print(f"  [red]{err_fb}[/red]\n")
+                        continue
+                console.print()
+                continue
+
+            # ── Action validation ─────────────────────────────────────────
+            action_name = action.get("action") if action else None
+            is_match, _ = ctrl.validate_action(intent_name, action_name)
+            if not is_match:
+                console.print(
+                    f"  [dim yellow]⚠ Intent mismatch: expected [white]{intent_name}[/white]"
+                    f" but AI triggered [white]{action_name}[/white][/dim yellow]"
                 )
-                draft = {}
-                console.print(f"  [green]✓[/green] Saved as [white]{task_id}[/white]\n")
-            else:
-                console.print("  [dim]Skipped. Draft kept — keep adding details or /clear to abandon.[/dim]\n")
 
-        elif result_type == "task_created":
-            _render_task_card(result_data, title="Task Created")
-            console.print()
+            # ── Dispatch action ───────────────────────────────────────────
+            result_type, result_data, action_err, draft = ctrl.handle_chat_action(
+                action, current_draft=draft
+            )
 
-        elif result_type == "task_list":
-            tasks = result_data
-            if not tasks:
-                console.print("  [dim]No tasks found.[/dim]")
-            else:
-                label = "Search Results" if action_name == "search_tasks" else "Tasks"
-                console.print(_task_table(tasks, f"{label} ({len(tasks)})"))
-            console.print()
+            if action_err:
+                console.print(f"  [red]{action_err}[/red]\n")
+                continue
 
-        elif result_type == "task_edited":
-            _render_task_card(result_data, title="Updated")
-            console.print()
+            # ── Render result ─────────────────────────────────────────────
+            if result_type == "draft_updated":
+                if draft:
+                    collected = "  ".join(
+                        f"[dim]{k}[/dim] [white]{v}[/white]" for k, v in draft.items() if v
+                    )
+                    console.print(f"  [dim]Draft →[/dim] {collected}\n")
 
-        elif result_type == "task_completed":
-            t = result_data
-            console.print(f"  [green]✓[/green] [dim]{t['name']}[/dim] [white]({t['id']})[/white] done.\n")
+            elif result_type == "confirm_preview":
+                _render_task_card(result_data, title="Preview — save this task?")
+                if Confirm.ask("  Save?"):
+                    task_id, _ = ctrl.add_manual(
+                        name=result_data.get("name"),
+                        category=result_data.get("category", "General"),
+                        priority=result_data.get("priority", "Medium"),
+                        due_date=result_data.get("due_date"),
+                        notes=result_data.get("notes"),
+                    )
+                    draft = {}
+                    console.print(f"  [green]✓[/green] Saved as [white]{task_id}[/white]\n")
+                else:
+                    console.print("  [dim]Skipped. Draft kept — /clear to abandon.[/dim]\n")
 
-        elif result_type == "task_deleted":
-            console.print(f"  [dim]Moved {result_data['id']} to recycle bin.[/dim]\n")
+            elif result_type == "task_created":
+                _render_task_card(result_data, title="Task Created")
+                console.print()
 
-        elif result_type == "analytics":
-            s  = result_data
-            pc = "green" if s["productivity"] >= 70 else "yellow" if s["productivity"] >= 40 else "red"
-            console.print(Panel(
-                f"  [dim]Total[/dim]     [white]{s['total']}[/white]   "
-                f"[dim]Done[/dim] [green]{s['completed']}[/green]   "
-                f"[dim]Pending[/dim] [yellow]{s['pending']}[/yellow]   "
-                f"[dim]Overdue[/dim] [red]{s['overdue']}[/red]   "
-                f"[dim]Rate[/dim] [{pc}]{s['productivity']}%[/{pc}]   "
-                f"[dim]Streak[/dim] [white]{s['streak']}d[/white]",
-                title="[dim]Analytics[/dim]", border_style="dim", padding=(0, 1),
-            ))
-            console.print()
+            elif result_type == "task_list":
+                tasks = result_data
+                if not tasks:
+                    console.print("  [dim]No tasks found.[/dim]")
+                else:
+                    label = "Search Results" if action_name == "search_tasks" else "Tasks"
+                    console.print(_task_table(tasks, f"{label} ({len(tasks)})"))
+                console.print()
 
-        elif result_type == "draft_cleared":
-            console.print("  [dim]Draft cleared.[/dim]\n")
-        elif result_type == "passthrough":
-            pass
+            elif result_type == "task_edited":
+                _render_task_card(result_data, title="Updated")
+                console.print()
+
+            elif result_type == "task_completed":
+                t = result_data
+                console.print(f"  [green]✓[/green] [dim]{t['name']}[/dim] [white]({t['id']})[/white] done.\n")
+
+            elif result_type == "task_deleted":
+                console.print(f"  [dim]Moved {result_data['id']} to recycle bin.[/dim]\n")
+
+            elif result_type == "analytics":
+                s  = result_data
+                pc = "green" if s["productivity"] >= 70 else "yellow" if s["productivity"] >= 40 else "red"
+                console.print(Panel(
+                    f"  [dim]Total[/dim]     [white]{s['total']}[/white]   "
+                    f"[dim]Done[/dim] [green]{s['completed']}[/green]   "
+                    f"[dim]Pending[/dim] [yellow]{s['pending']}[/yellow]   "
+                    f"[dim]Overdue[/dim] [red]{s['overdue']}[/red]   "
+                    f"[dim]Rate[/dim] [{pc}]{s['productivity']}%[/{pc}]   "
+                    f"[dim]Streak[/dim] [white]{s['streak']}d[/white]",
+                    title="[dim]Analytics[/dim]", border_style="dim", padding=(0, 1),
+                ))
+                if s.get("by_status"):
+                    _bar_chart(s["by_status"], "Status")
+                if s.get("by_priority"):
+                    _bar_chart(s["by_priority"], "Priority")
+                if s.get("by_category"):
+                    _bar_chart(s["by_category"], "Category")
+                console.print()
+
+            elif result_type == "draft_cleared":
+                console.print("  [dim]Draft cleared.[/dim]\n")
+            elif result_type == "passthrough":
+                pass
 
 
 # ── optimize ──────────────────────────────────────────────────────────────────
