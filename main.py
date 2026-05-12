@@ -278,10 +278,44 @@ def _show_dashboard():
             border_style="dim",
         ))
 
-    # ── AI motivation ──────────────────────────────────────────────────────
+    # ── AI motivation — loads in background, tips animate meanwhile ────────
     console.print()
-    with console.status("[dim]Getting your daily brief... (may take ~30s)[/dim]", spinner="dots"):
-        msg, mot_err = ctrl.get_motivation()
+    TIPS = [
+        "💡  Break big tasks into 25-min Pomodoro blocks — use [white]taskflow focus <ID>[/white]",
+        "🎯  High priority tasks first, always. Your brain is freshest in the morning.",
+        "📋  Name tasks as actions: 'Write report' beats 'Report' every time.",
+        "🔥  A 3-day streak beats a perfect week you never started.",
+        "⚡  If it takes < 2 minutes, do it now — don't add it to the list.",
+        "📅  Set due dates even for flexible tasks — deadlines create focus.",
+        "🗂️  Group similar tasks by category — context-switching kills momentum.",
+        "✅  Complete your hardest task before lunch. Everything else feels easy after.",
+        "🧠  Pending tasks drain mental energy even when you're not working on them.",
+        "📊  Check [white]taskflow analytics[/white] weekly — what gets measured gets done.",
+    ]
+
+    import itertools
+    mot_result = [None, None]
+
+    def _mot_thread():
+        mot_result[0], mot_result[1] = ctrl.get_motivation()
+
+    mt = threading.Thread(target=_mot_thread, daemon=True)
+    mt.start()
+
+    tip_cycle = itertools.cycle(TIPS)
+    with Live(console=console, refresh_per_second=0.5) as live:
+        while mt.is_alive():
+            live.update(Panel(
+                f"[dim]{next(tip_cycle)}[/dim]",
+                title="[dim]TaskFlow AI  ·  loading...[/dim]",
+                border_style="dim",
+                padding=(0, 2),
+            ))
+            time.sleep(2.2)
+
+    mt.join()
+    msg, mot_err = mot_result
+
     if msg:
         console.print(Panel(
             f"[italic white]{msg}[/italic white]",
