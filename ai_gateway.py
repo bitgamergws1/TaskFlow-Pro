@@ -534,8 +534,13 @@ class AIGateway:
 
         t = text.strip()
 
-        # Starts with garbage punctuation/symbols (like ', so may{')
-        if re.match(r'^[,\.\!\?\{\}\[\]<>|\\\/\*#@%^&~`]+', t):
+        # Strip leading markdown formatting before checking start character
+        # (DEEPSHI sometimes returns **bold** or # heading responses — that's fine)
+        t_check = re.sub(r'^[\*_#]+\s*', '', t)
+
+        # Starts with TRULY garbage chars: JSON fragments, brackets, pipes, slashes
+        # Note: !, ?, ., #, * removed — these appear in valid markdown/emoji responses
+        if re.match(r'^[,\{\}\[\]<>|\\\/^&~`]+', t_check or t):
             return False, "Response starts with punctuation/symbols"
 
         # Ends abruptly mid-word or with open bracket
@@ -551,8 +556,9 @@ class AIGateway:
             return False, "Response is only whitespace"
 
         # Suspiciously short reply that looks truncated (word cut mid)
+        # ':' added — "Yeh raha:" and "Here you go:" are valid list responses
         words = t.split()
-        if len(words) <= 3 and not any(c in t for c in '.?!।'):
+        if len(words) <= 3 and not any(c in t for c in '.?!।:'):
             return False, f"Response suspiciously short ({len(words)} words, no sentence ender)"
 
         return True, "ok"
