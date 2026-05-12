@@ -4,14 +4,19 @@ ai_gateway.py — Multi-Model AI Routing via DevNest Proxy
 
 import json
 import re
+import time
 import requests
 from datetime import date
 
-PROXY_URL = "https://devnest-proxy-server.onrender.com/v1/proxy/ai"
-HEADERS   = {
+PROXY_URL        = "https://devnest-proxy-server.onrender.com/v1/proxy/ai"
+PROXY_HEALTH_URL = "https://devnest-proxy-server.onrender.com/health"
+HEADERS          = {
     "X-DevNest-Token": "DEVNEST_EVAL_2026",
     "Content-Type":    "application/json",
 }
+
+RETRY_WAIT  = 25   # seconds to wait on 502/504 (Render cold-start window)
+MAX_RETRIES = 1    # one silent retry is enough
 
 EXPIRY  = date(2026, 5, 20)
 CLAUDE  = "claude-haiku-4-5-20251001"
@@ -155,41 +160,79 @@ class AIGateway:
         lo = text.lower()
         return any(m in lo for m in self._PROXY_ERR_MARKERS)
 
+    # ── Wake-up ping ─────────────────────────────────────────────────────────
+
+    @staticmethod
+    def wake_up():
+        """
+        Fire a lightweight GET to /health so Render's AI backend starts
+        warming up while the dashboard is rendering.
+        Called in a background thread — errors silently ignored.
+        """
+        try:
+            requests.get(PROXY_HEALTH_URL, timeout=10)
+        except Exception:
+            pass
+
     # ── Core call ────────────────────────────────────────────────────────────
 
     def _call(self, model, prompt, history=None, timeout=75, **extra):
         if self._expired():
             return None, "Evaluation period ended."
-        try:
-            payload = {
-                "model":   model,
-                "prompt":  prompt,
-                "history": (history or [])[-12:],
-                **extra,          # e.g. enable_thinking, session_key
-            }
-            resp = requests.post(PROXY_URL, json=payload, headers=HEADERS, timeout=timeout)
-            if resp.status_code != 200:
-                return None, f"Proxy error HTTP {resp.status_code}."
-            data = resp.json()
 
-            raw = (
-                data.get("response") or data.get("reply") or data.get("content")
-                or data.get("message") or data.get("text") or data.get("output")
-            )
-            text = self._extract_text(raw)
+        payload = {
+            "model":   model,
+            "prompt":  prompt,
+            "history": (history or [])[-12:],
+            **extra,
+        }
 
-            # Proxy sometimes returns an error sentence instead of AI output
-            if text and self._is_proxy_error(text):
-                return None, "AI is taking too long. Please try again in a moment."
+        for attempt in range(MAX_RETRIES + 1):
+            try:
+                resp = requests.post(
+                    PROXY_URL, json=payload, headers=HEADERS, timeout=timeout
+                )
 
-            return text, None
+                # Render cold-start: backend not yet up — wait and retry once
+                if resp.status_code in (502, 503, 504):
+                    if attempt < MAX_RETRIES:
+                        time.sleep(RETRY_WAIT)
+                        continue
+                    return None, (
+                        f"Backend is starting up (HTTP {resp.status_code}). "
+                        "Wait ~30s and try again."
+                    )
 
-        except requests.exceptions.Timeout:
-            return None, "AI is thinking too long — try again in a moment."
-        except requests.exceptions.ConnectionError:
-            return None, "Cannot reach proxy."
-        except Exception as e:
-            return None, str(e)
+                if resp.status_code != 200:
+                    return None, f"Proxy error HTTP {resp.status_code}."
+
+                data = resp.json()
+                raw  = (
+                    data.get("response") or data.get("reply") or data.get("content")
+                    or data.get("message") or data.get("text") or data.get("output")
+                )
+                text = self._extract_text(raw)
+
+                # Proxy-level error surfaced as a 200-OK body
+                if text and self._is_proxy_error(text):
+                    return None, "AI is taking too long. Please try again in a moment."
+
+                return text, None
+
+            except requests.exceptions.Timeout:
+                if attempt < MAX_RETRIES:
+                    time.sleep(5)
+                    continue
+                return None, "AI is thinking too long — try again in a moment."
+            except requests.exceptions.ConnectionError:
+                if attempt < MAX_RETRIES:
+                    time.sleep(10)
+                    continue
+                return None, "Cannot reach proxy."
+            except Exception as e:
+                return None, str(e)
+
+        return None, "Request failed after retry."
 
     # ── Chat ─────────────────────────────────────────────────────────────────
 
