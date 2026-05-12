@@ -83,23 +83,200 @@ NO_ACTION_INTENTS  = {"weather", "general_question", "chitchat"}
 
 # ── Intent classify system prompt ─────────────────────────────────────────────
 
-INTENT_CLASSIFY_SYSTEM = """You are an intent classifier for a task management app.
+# ── Dynamic Intent Rulebook ───────────────────────────────────────────────────
+# This is the AI-readable rulebook. No hardcoded keywords — the AI uses its own
+# multilingual understanding to match user messages to intents.
+# Add new languages, phrasings, or edge cases here freely.
 
-Given a user message, return ONLY a JSON object — no markdown, no explanation:
-{"intent": "<one of the intents>", "entities": {"task_name": null, "task_id": null, "keyword": null, "location": null}}
+INTENT_RULEBOOK = """
+=== TASKFLOW INTENT RULEBOOK ===
+
+You are a multilingual intent classifier. Use your full language understanding —
+do NOT rely on exact keywords. Understand meaning, not just words.
+
+--- INTENT: complete_task ---
+The user is saying they HAVE DONE / FINISHED something, OR they want a task marked as done.
+Understand this across ALL languages and styles:
+
+• User says they finished an action that matches a task: "I drank water", "mene pani pi liya",
+  "paani pee liya", "pee leya" (Punjabi), "kudichuten" (Tamil), "kudichhu" (Malayalam),
+  "kheyechi" (Bengali), "naan kudichittaen", "done kar diya", "ho gaya", "nipta diya",
+  "complete ho gaya", "finish kar diya", "kar liya", "kr liya", "khatam ho gaya"
+• User asks what to do AFTER saying they finished: "ab kya?", "tho ab?", "to ab kya karna hai?",
+  "now what?", "aage kya?", "next step?"  ← if context has a matching pending task → complete_task
+• User says "mark as done", "done karo", "complete karo", "tick karo", "haan kar do"
+• Key signal: user describes completing an ACTION that a pending task is about
+
+NOT complete_task if: user is asking about task status without saying they did it.
+
+--- INTENT: create_task ---
+User wants to ADD a new task to their list.
+• "add karo", "new task", "task banana hai", "remind me to", "note kar lo",
+  "ek task add karo", "likh lo", "save kar lo", "bana do"
+• Describing a future to-do: "mujhe kal report likhni hai" → create_task
+
+--- INTENT: list_tasks ---
+User wants to SEE their existing tasks.
+• "mere tasks dikhao", "kya karna hai", "list karo", "show tasks", "mera kya pending hai",
+  "konsa task hai", "tasks batao", "kya chal raha hai mere saath", "meri list"
+• "konsa" / "which one" / "kaun sa" when asking about current tasks → list_tasks
+
+--- INTENT: search_tasks ---
+User wants to FIND a specific task by name or keyword (not listing all).
+• "dhundho", "search karo", "find the task about X", "X wala task kahan hai"
+
+--- INTENT: delete_task ---
+User wants to REMOVE a task permanently.
+• "hata do", "delete karo", "remove karo", "hatao", "nikal do", "mujhe ye nahi chahiye"
+
+--- INTENT: edit_task ---
+User wants to CHANGE something about an existing task.
+• "badlo", "change karo", "update karo", "priority change", "due date update",
+  "naam badlo", "edit karo"
+
+--- INTENT: analytics ---
+User wants productivity stats, numbers, or a summary.
+• "stats dikhao", "kitne complete kiye", "productivity kya hai", "streak", "analytics",
+  "kitne pending hain", "meri progress"
+
+--- INTENT: optimize ---
+User wants a schedule or time plan.
+• "schedule banao", "plan karo", "optimize karo", "time table", "kab karu ye sab"
+
+--- INTENT: general_question ---
+User is asking general knowledge NOT about their task list.
+• "pani kab pina chahiye" (when to drink water — general health tip, NOT a task search)
+• "best time for exercise", "ye kya hota hai", "kaise kare", advice/tips/facts
+• Key rule: if user asks ABOUT A TOPIC (like water/exercise/food) rather than ABOUT THEIR TASKS → general_question
+
+--- INTENT: weather ---
+User asks about weather conditions.
+• "aaj mausam kaisa hai", "barish hogi", "temperature kya hai", "garmi hai kya",
+  "will it rain", "mausam batao"
+
+--- INTENT: chitchat ---
+Casual conversation, greetings, small talk.
+• "hi", "hello", "kya haal hai", "kaisa chal raha hai", "theek ho?", "shukriya", "thanks"
+
+--- INTENT: unclear ---
+Use ONLY when genuinely cannot determine intent even with full context.
+
+=== DECISION PRIORITY (when ambiguous) ===
+complete_task > delete_task > edit_task > create_task > list_tasks > search_tasks > analytics > general_question > weather > chitchat > unclear
+
+=== KEY PRINCIPLES ===
+1. Use conversation history — a message makes more sense with context
+2. "ab kya" / "tho ab" / "now what" AFTER user describes an action → complete_task
+3. General knowledge questions about a TOPIC (not their task list) → general_question
+4. When user describes doing something that matches a pending task → complete_task
+5. Trust meaning over keywords — understand intent, not literal words
+"""
+
+# ── Intent classify system prompt ─────────────────────────────────────────────
+
+INTENT_CLASSIFY_SYSTEM = """You are a multilingual intent classifier for a task management app.
+
+{rulebook}
+
+Given the conversation context and the user's latest message, return ONLY a JSON object:
+{{"intent": "<intent_name>", "entities": {{"task_name": null, "task_id": null, "keyword": null, "location": null}}}}
 
 Valid intents: create_task, list_tasks, search_tasks, complete_task, delete_task, edit_task, analytics, optimize, weather, general_question, chitchat, unclear
 
-Classification rules:
-- weather / mausam / barish / garmi / sardi / temperature / baarish / thand → weather
-- If user mentions a task ID like A1B2C3 → extract in task_id
-- See/show/list/dikhao tasks → list_tasks
-- Which task / kaunsa task / task detail → list_tasks or search_tasks
-- Stats/productivity/rate/streak/analytics → analytics
-- General knowledge not about tasks → general_question
-- Greetings / hi / hello / kya haal / how are you → chitchat
-- When unsure → unclear
-- For weather queries, extract city/location in entities.location if user mentions one
+Rules:
+- Read the FULL rulebook above before deciding
+- Extract task_id if user mentions an ID like 9E15C7B6
+- Extract location in entities.location for weather queries
+- Return ONLY the JSON object, no markdown, no explanation
+""".replace("{rulebook}", INTENT_RULEBOOK)
+
+# ── Action Playbook ───────────────────────────────────────────────────────────
+# Situation → Action mapping for the main AI.
+# Language-agnostic: describes WHAT THE USER MEANS, not how they say it.
+# Add new rules here freely — AI applies them using its own understanding.
+
+ACTION_PLAYBOOK = """
+=== ACTION PLAYBOOK ===
+These are situation-to-action rules. Read them before deciding what action to emit.
+Language does not matter — understand the MEANING, then apply the rule.
+
+── RULE 1: User completed a task ──────────────────────────────────────────────
+SITUATION: User says they have done / finished / completed something that matches
+           a pending task in their list.
+SIGNALS (any language, any phrasing):
+  - "I drank water" when "Drink water" is pending
+  - "pani pi liya" when "Pani peena" is pending
+  - "report likh di" when a report-writing task is pending
+  - "gym ho gaya", "kha liya", "so gaya", "padh liya"
+  - User implies the action is done, not that they want to do it
+ACTION: emit complete_task with the matching task_id
+REPLY: Confirm completion naturally in user's language. e.g. "Done! Pani peena ✓"
+
+── RULE 2: User asks "now what?" after completing ─────────────────────────────
+SITUATION: User completed something (or just said they did) and asks what to do next.
+SIGNALS: "ab kya?", "tho ab?", "next?", "aage kya karna hai?", "what's next?"
+ACTION: emit complete_task for the finished task (if not already done),
+        then emit list_tasks to show remaining pending work
+REPLY: Acknowledge completion, show what's still pending.
+
+── RULE 3: User wants to add a task ───────────────────────────────────────────
+SITUATION: User describes a future to-do, something they NEED to do, or explicitly
+           asks to add/create/save a task.
+SIGNALS: "mujhe kal X karna hai", "remind me to X", "add a task for X",
+         "X karna hai note kar lo", "save this: X"
+ACTION: emit update_draft with extracted fields, ask for missing ones one at a time
+REPLY: Confirm what you captured, ask for 1-2 missing fields (not all at once)
+
+── RULE 4: User wants to see their tasks ──────────────────────────────────────
+SITUATION: User wants to view/see their current task list.
+SIGNALS: "mere tasks dikhao", "kya pending hai", "list karo", "show my tasks",
+         "konsa task hai mera", "kya karna hai abhi"
+ACTION: emit list_tasks (with optional status/category filters if mentioned)
+REPLY: ONLY say something like "Yeh raha:" or "Dekh lo:" — 2-3 words max.
+       NEVER write task names, due dates, priorities, or any task details in your text.
+       The system will fetch and display real task data automatically after your action.
+       Making up task details = WRONG. You do not know the task names — only the count.
+
+── RULE 5: User wants to delete a task ────────────────────────────────────────
+SITUATION: User wants to remove a task from their list.
+SIGNALS: "hata do", "delete karo", "mujhe ye nahi chahiye", "remove this task"
+ACTION: emit delete_task with task_id
+REPLY: Confirm deletion. Mention they can restore it from recycle bin.
+
+── RULE 6: User wants to edit a task ──────────────────────────────────────────
+SITUATION: User wants to change something about an existing task.
+SIGNALS: "priority change karo", "due date aage karo", "naam badlo", "edit karo"
+ACTION: emit edit_task with task_id and the specific field updates
+REPLY: Confirm what was changed.
+
+── RULE 7: User asks for stats / productivity ─────────────────────────────────
+SITUATION: User wants numbers — how many done, pending, streak, productivity rate.
+SIGNALS: "kitne complete kiye", "meri productivity", "stats", "streak kitna hai"
+ACTION: emit show_analytics
+REPLY: Brief summary in user's language.
+
+── RULE 8: User asks a general knowledge question ─────────────────────────────
+SITUATION: User asks about a topic (health, tips, facts, how-to) that is NOT
+           specifically about their task list.
+SIGNALS: "pani kab pina chahiye" (when to drink water — health tip, not a task search)
+         "best time to study", "ye kaise karte hain", "X kya hota hai"
+ACTION: NO task action. Just answer the question in text.
+REPLY: Answer naturally. Do not emit any TASKFLOW_ACTION.
+
+── RULE 9: Ambiguous — could be completion OR question ────────────────────────
+SITUATION: User message is unclear. Check pending tasks list first.
+           If a pending task closely matches what user described doing → assume RULE 1.
+           If no match → ask one short clarifying question.
+ACTION: complete_task if match found, else ask clarification
+REPLY: If asking, be brief: one question only.
+
+── RULE 10: Draft in progress ─────────────────────────────────────────────────
+SITUATION: A task draft is already being built (fields in draft context).
+           User provides more information about it.
+ACTION: emit update_draft with new fields. Do NOT re-ask collected fields.
+        When all 4 core fields (name, priority, due_date, category) are ready →
+        emit confirm_task to show preview.
+REPLY: Acknowledge what was added, ask for the next missing field only.
 """
 
 # ── Main chat system prompt ───────────────────────────────────────────────────
@@ -108,68 +285,59 @@ CHAT_SYSTEM = """You are TaskFlow AI — a sharp, no-filler productivity assista
 
 TODAY: {today}
 
-=== LANGUAGE RULE (CRITICAL) ===
+=== LANGUAGE RULE ===
 Detect the language/style of each user message and reply in the EXACT same language.
-- English → English | Hindi (Devanagari) → Hindi | Hinglish → Hinglish | Mix → match mix
-Never switch language on your own.
+English → English | Hindi → Hindi | Hinglish → Hinglish | any other → match it.
+Never switch language. Never translate.
+
+=== ACTION PLAYBOOK ===
+{action_playbook}
 
 === CURRENT TASK STATE ===
 {task_stats}
 
-Task state awareness rules:
-- total_tasks=0 means user has NO tasks at all. Tell them clearly. Offer to add one.
+- total_tasks=0 → user has NO tasks. Say so clearly. Offer to add one.
 - Never show a task list when there are 0 tasks — just say so in plain text.
-- If overdue > 0, always mention it when user asks about tasks or analytics.
-- If pending > 0, stay aware of this context.
+- If overdue > 0, mention it when user asks about tasks or analytics.
+
+=== ⚠ ANTI-HALLUCINATION RULE (CRITICAL) ===
+You only know task COUNTS (total, pending, completed, overdue) from stats above.
+You do NOT know actual task names, due dates, priorities, or IDs.
+NEVER write specific task details in your text reply — not even as examples.
+When user asks to see tasks → say only "Yeh raha:" / "Here you go:" and emit list_tasks.
+The system will fetch and display the REAL task data. You inventing task info = serious bug.
 
 === CURRENT TASK DRAFT ===
 {draft_context}
 
-Draft rules:
-- DO NOT re-ask fields already in draft.
-- Ask 1-2 missing fields at a time.
-- If user switches topic: answer first, then remind about the open draft.
-- Emit "update_draft" when user gives any task field.
-- Emit "confirm_task" when all fields are ready (shows preview).
-- Emit "create_task" only after user confirms preview.
-- Emit "clear_draft" if user abandons task creation.
-
 === DETECTED USER INTENT ===
 {intent_context}
-
-Intent alignment rules:
-- ONLY emit show_analytics when intent is "analytics".
-- ONLY emit list_tasks when intent is "list_tasks".
-- For weather/general_question: just reply in text. DO NOT emit ANY task action.
-- One action per response unless chaining is logically required.
 
 === LOCATION & WEB SEARCH CONTEXT ===
 {location_context}
 
-If web search results are injected in the prompt:
-- Use them to answer weather / general questions accurately.
-- Summarise clearly in user's language.
-- Do not mention "web search" or "search results" explicitly — just answer naturally.
+If web search results are in the prompt: use them to answer naturally. Don't say "search results show".
 
-=== ACTIONS (task intents only) ===
-TASKFLOW_ACTION:{"action":"ACTION_NAME","data":{...}}  ← append at very END of reply, nothing after.
+=== AVAILABLE ACTIONS ===
+Append at the very END of your reply — nothing after it:
+TASKFLOW_ACTION:{{"action":"ACTION_NAME","data":{{...}}}}
 
-  update_draft   → {name?, priority?, due_date?, category?, notes?}
+  update_draft   → {{name?, priority?, due_date?, category?, notes?}}
   confirm_task   → full task fields for preview
-  create_task    → {name, priority, due_date, category, notes?}
-  clear_draft    → {}
-  search_tasks   → {query}
-  list_tasks     → {status?, category?, priority?}
-  edit_task      → {task_id, updates:{field:value,...}}
-  complete_task  → {task_id}
-  delete_task    → {task_id}
-  show_analytics → {}
+  create_task    → {{name, priority, due_date, category, notes?}}
+  clear_draft    → {{}}
+  search_tasks   → {{query}}
+  list_tasks     → {{status?, category?, priority?}}
+  edit_task      → {{task_id, updates:{{field:value,...}}}}
+  complete_task  → {{task_id}}
+  delete_task    → {{task_id}}
+  show_analytics → {{}}
 
 === STYLE ===
-- 1-2 sentences unless explaining something complex.
-- No "Certainly!", "Of course!", "Great!".
-- Direct and human. Just help.
-"""
+- 1-2 sentences max unless explaining something complex.
+- No "Certainly!", "Of course!", "Great!" filler.
+- Direct, human, helpful.
+""".replace("{action_playbook}", ACTION_PLAYBOOK)
 
 # ── Response Validator judge prompt ──────────────────────────────────────────
 
@@ -180,6 +348,12 @@ Score the response 0-10 based on:
 - Does it actually address the user's message?
 - Is it free of random symbols, JSON fragments, or gibberish?
 - Is it in a language the user would understand?
+
+IMPORTANT EXCEPTIONS — these are valid responses, score them 8+:
+- Very short replies like "Yeh raha:", "Here you go:", "Dekh lo:", "Done!" are valid
+  when the user asked to list/show tasks (the system shows a table separately)
+- Completion confirmations like "✓ Done!" or "Ho gaya!" are valid
+- A reply that says only "Theek hai." or "Ok." after agreeing to something is valid
 
 Return ONLY a JSON object, nothing else:
 {"score": <0-10>, "reason": "<one short sentence>", "is_valid": <true|false>}
@@ -334,11 +508,25 @@ class AIGateway:
 
         return None, "Request failed after retry."
 
+    @staticmethod
+    def _scrub_leaked_json(text: str) -> str:
+        """
+        DEEPSHI sometimes leaks a JSON blob into the text portion just before
+        TASKFLOW_ACTION (or instead of it). Strip any trailing {...} or {...}
+        that looks like an action object from the end of the reply text.
+        """
+        # Remove trailing JSON objects: optional whitespace then {...}
+        cleaned = re.sub(r'\s*\{[^{}]*"action"\s*:[^{}]*\}\s*$', '', text).strip()
+        # Also remove trailing code-fenced JSON blocks
+        cleaned = re.sub(r'\s*```(?:json)?\s*\{.*?\}\s*```\s*$', '', cleaned, flags=re.DOTALL).strip()
+        return cleaned or text
+
     # ── ✅ NEW: Rule-based fast validator ─────────────────────────────────────
 
     def _fast_validate(self, text: str) -> tuple[bool, str]:
         """
         Quick heuristic checks before spending tokens on the judge.
+        NOTE: receives already-stripped text (no ACTION_TAG, no leaked JSON).
         Returns (is_valid, reason).
         """
         if not text or len(text.strip()) < MIN_REPLY_LENGTH:
@@ -354,9 +542,9 @@ class AIGateway:
         if re.search(r'[\{\[\(]\s*$', t):
             return False, "Response ends with unclosed bracket"
 
-        # Contains raw JSON fragments mixed into text (not the action tag)
-        if ACTION_TAG not in text and re.search(r'"\s*:\s*"[^"]{0,30}"\s*,', t):
-            return False, "Response contains raw JSON fragments"
+        # Contains raw JSON key-value fragments (after all cleanup, this is a real problem)
+        if re.search(r'"action"\s*:\s*"[a-z_]+"', t):
+            return False, "Response still contains action JSON in text body"
 
         # Pure whitespace / newlines
         if not t.replace('\n', '').replace('\r', '').strip():
@@ -406,23 +594,27 @@ class AIGateway:
         Stage 2: Haiku judge (only if Stage 1 passes)
         Returns (is_valid, failure_reason)
 
-        IMPORTANT: strips TASKFLOW_ACTION tag before any check — the judge must
-        only see the user-facing reply text, not the internal action protocol JSON.
+        Cleans the reply in two passes before validation:
+        1. Strip TASKFLOW_ACTION tag (internal protocol JSON)
+        2. Strip any leaked action JSON that DEEPSHI leaked into the text body
+        Both the fast checker and judge only see the clean user-facing text.
         """
-        # Strip action tag — judge should never see the internal JSON protocol
-        reply_for_validation = (
+        # Pass 1: strip action tag
+        reply_clean = (
             raw_reply.split(ACTION_TAG, 1)[0].strip()
             if ACTION_TAG in raw_reply
             else raw_reply
         )
+        # Pass 2: strip any leaked action JSON from end of text body
+        reply_clean = self._scrub_leaked_json(reply_clean)
 
-        # Stage 1 — instant rules (on clean text)
-        fast_ok, fast_reason = self._fast_validate(reply_for_validation)
+        # Stage 1 — instant rules (on double-cleaned text)
+        fast_ok, fast_reason = self._fast_validate(reply_clean)
         if not fast_ok:
             return False, f"[fast-check] {fast_reason}"
 
-        # Stage 2 — AI judge (on clean text, never sees action JSON)
-        judge_ok, score, judge_reason = self._judge_response(user_msg, reply_for_validation)
+        # Stage 2 — AI judge (never sees action JSON)
+        judge_ok, score, judge_reason = self._judge_response(user_msg, reply_clean)
         if not judge_ok:
             return False, f"[judge score={score}] {judge_reason}"
 
@@ -459,26 +651,43 @@ class AIGateway:
                 f"{k}={v}" for k, v in draft.items() if v
             )
 
-        prompt = f"""You are a message clarifier for a task manager chatbot.
+        prompt = f"""You are a message clarifier for a multilingual task manager chatbot.
 
-Given the conversation history and the user's latest message, rewrite the message
-to be fully self-contained and unambiguous. Rules:
-- Resolve pronouns: "us task" / "isko" / "woh" / "wahi" → use the actual task name or ID from history
-- Resolve follow-up shortcuts: "haan" / "theek hai" → spell out what the user is agreeing to
-- If user asks a general knowledge question (times, tips, advice) that is NOT about their task list → keep it as-is but add context like "[general question, not a task search]"
-- Preserve the user's original language (Hindi/Hinglish/English)
-- Do NOT change the meaning, do NOT add extra requests
-- If the message is already clear and self-contained, return it unchanged
-- Return ONLY the rewritten message, nothing else
+Use this intent rulebook to understand what the user is trying to do:
+{INTENT_RULEBOOK}
+
+Your job: rewrite the user's LATEST MESSAGE to be fully self-contained and unambiguous,
+so the intent classifier and main AI are not confused by pronouns or follow-up shortcuts.
+
+STRICT RULES:
+1. LANGUAGE — reply in the EXACT SAME language/style as the user's original message.
+   Hindi → Hindi, Hinglish → Hinglish, English → English, Punjabi → Punjabi.
+   NEVER add a language that wasn't in the original. NEVER translate.
+
+2. PRONOUN RESOLUTION — replace vague references with actuals from history:
+   "us task" / "isko" / "woh" / "wahi wala" / "it" / "that" → actual task name or ID
+
+3. COMPLETION SIGNALS — if user says they did something matching a pending task,
+   make it explicit: "Maine [task name] complete kar liya — please isko done mark karo"
+
+4. FOLLOW-UP SHORTCUTS — "haan" / "theek hai" / "ok" → spell out what they agreed to
+
+5. GENERAL QUESTIONS — if the question is general knowledge (tips, facts, how-to)
+   NOT about their task list → prepend "[general question]: " to the original message,
+   keep the rest unchanged in the original language.
+
+6. IF ALREADY CLEAR → return the message UNCHANGED.
+
+7. Return ONLY the rewritten message. No explanation. No quotes.
 
 {draft_ctx}
 
-Conversation:
+Conversation history:
 {recent_ctx}
 
-Latest user message: "{user_message}"
+User's latest message: "{user_message}"
 
-Rewritten:"""
+Rewritten message:"""
 
         result, err = self._call(CLAUDE, prompt, timeout=12)
         if err or not result:
