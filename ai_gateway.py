@@ -552,7 +552,7 @@ class AIGateway:
 
         # Suspiciously short reply that looks truncated (word cut mid)
         words = t.split()
-        if len(words) <= 3 and not any(c in t for c in '.?!।'):
+        if len(words) <= 3 and not any(c in t for c in '.?!।:'):
             return False, f"Response suspiciously short ({len(words)} words, no sentence ender)"
 
         return True, "ok"
