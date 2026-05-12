@@ -205,7 +205,7 @@ def _bar_chart(data: dict, title: str, width: int = 28):
 def _render_task_card(t: dict, title="Task"):
     p_style = PRIORITY_STYLE.get(t.get("priority", "Medium"), "white")
     console.print(Panel(
-        f"  [dim]ID[/dim]       [white]{t['id']}[/white]\n"
+        f"  [dim]ID[/dim]       [white]{t.get('id', '— not saved yet —')}[/white]\n"
         f"  [dim]Name[/dim]     [bold white]{t['name']}[/bold white]\n"
         f"  [dim]Priority[/dim] [{p_style}]{t.get('priority','Medium')}[/{p_style}]\n"
         f"  [dim]Category[/dim] [white]{t.get('category','General')}[/white]\n"
