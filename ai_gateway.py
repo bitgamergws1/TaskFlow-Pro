@@ -552,7 +552,7 @@ class AIGateway:
 
         # Suspiciously short reply that looks truncated (word cut mid)
         words = t.split()
-        if len(words) <= 3 and not any(c in t for c in '.?!।:'):
+        if len(words) <= 3 and not any(c in t for c in '.?!।'):
             return False, f"Response suspiciously short ({len(words)} words, no sentence ender)"
 
         return True, "ok"
@@ -953,3 +953,53 @@ Rewritten message:"""
             f"Direct, witty, specific. No filler. End with one punchy line."
         )
         return self._call(CLAUDE, prompt, timeout=30)
+    # ── Multi-Agent: Prompt Decomposer ───────────────────────────────────────
+
+    def decompose_prompt(self, user_message: str, history=None) -> list:
+        """
+        Splits a complex multi-intent prompt into ordered sub-tasks.
+        Each sub-task: {"sub_message": str, "intent": str}
+        Returns list with 1 item for simple prompts, 2+ for compound ones.
+        Fast Haiku call ~2-4s. Never raises; returns single-item fallback on failure.
+        """
+        recent = ""
+        if history:
+            recent = "\n".join(
+                f"{'User' if m['role'] == 'user' else 'AI'}: {m['content'][:120]}"
+                for m in history[-4:]
+            )
+
+        prompt = (
+            "You are a task decomposer for a multilingual task manager.\n\n"
+            "Valid intents: create_task, list_tasks, search_tasks, complete_task, "
+            "delete_task, edit_task, analytics, optimize, weather, general_question, chitchat\n\n"
+            "Split the user message into 1 or more independent sub-tasks.\n"
+            "RULES:\n"
+            "1. Single intent -> list with 1 item.\n"
+            "2. Mixed intents (create task AND show analytics) -> split them.\n"
+            "3. Preserve the user language in each sub_message.\n"
+            "4. Order: complete/delete first, list/search next, create then, analytics last.\n"
+            "5. Return ONLY a JSON array, no markdown.\n\n"
+            'Format: [{"sub_message": "...", "intent": "..."}, ...]\n\n'
+            + (f"Recent context:\n{recent}\n\n" if recent else "")
+            + f'User message: "{user_message}"\n\nJSON array:'
+        )
+
+        fallback = [{"sub_message": user_message, "intent": "unclear"}]
+        result, err = self._call(CLAUDE, prompt, timeout=15)
+        if err or not result:
+            return fallback
+        try:
+            clean = result.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+            parsed = json.loads(clean)
+            if isinstance(parsed, list) and parsed:
+                valid = [
+                    item for item in parsed
+                    if isinstance(item, dict)
+                    and item.get("sub_message")
+                    and item.get("intent") in INTENTS
+                ]
+                return valid if valid else fallback
+        except (json.JSONDecodeError, TypeError):
+            pass
+        return fallback
