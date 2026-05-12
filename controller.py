@@ -84,35 +84,43 @@ class TaskController:
     def get_analytics(self):
         return self.db.get_analytics()
 
-    # ── Intent Classification ─────────────────────────────────────────────────
+    # ── Intent & Validation ───────────────────────────────────────────────────
 
     def classify_intent(self, user_message: str, history=None) -> dict:
-        """
-        Fast Haiku call to detect user intent before the main AI response.
-        Returns dict: {intent, entities, status_msg, label}
-        Never raises — falls back to 'unclear' silently.
-        """
+        """Fast Haiku intent classifier. Never raises."""
         return self.ai.classify_intent(user_message, history=history)
 
     def validate_action(self, intent: str, action_name: str | None) -> tuple[bool, str]:
-        """Check if AI's triggered action matches the classified intent."""
         return self.ai.validate_action(intent, action_name)
 
     # ── AI Chat ───────────────────────────────────────────────────────────────
 
-    def chat(self, user_message: str, history=None, draft: dict = None, intent_info: dict = None):
-        """Returns (reply, action, error)."""
-        return self.ai.chat(user_message, history=history, draft=draft, intent_info=intent_info)
+    def chat(
+        self,
+        user_message: str,
+        history=None,
+        draft: dict = None,
+        intent_info: dict = None,
+        location: str = None,
+    ):
+        """
+        Returns (reply, action, error).
+        Automatically fetches task_stats from DB and passes to AI.
+        """
+        task_stats = self.db.get_analytics()   # always fresh, cheap SQLite read
+        return self.ai.chat(
+            user_message,
+            history=history,
+            draft=draft,
+            intent_info=intent_info,
+            task_stats=task_stats,
+            location=location,
+        )
 
     def handle_chat_action(self, action_dict: dict, current_draft: dict = None):
         """
         Dispatch a structured action from the AI.
         Returns (result_type, result_data, error, new_draft)
-
-        result_type values:
-            draft_updated | confirm_preview | task_created | task_list |
-            task_edited   | task_completed  | task_deleted | analytics |
-            draft_cleared | error
         """
         if not action_dict:
             return "error", None, "No action.", current_draft
@@ -121,23 +129,19 @@ class TaskController:
         data   = action_dict.get("data", {})
         draft  = dict(current_draft or {})
 
-        # ── update_draft ──────────────────────────────────────────────────────
         if action == "update_draft":
             draft.update({k: v for k, v in data.items() if v})
             return "draft_updated", draft, None, draft
 
-        # ── clear_draft ───────────────────────────────────────────────────────
         elif action == "clear_draft":
             return "draft_cleared", {}, None, {}
 
-        # ── confirm_task (preview before save) ────────────────────────────────
         elif action == "confirm_task":
             preview = {**draft, **{k: v for k, v in data.items() if v}}
             preview.setdefault("priority", "Medium")
             preview.setdefault("category", "General")
             return "confirm_preview", preview, None, draft
 
-        # ── create_task ───────────────────────────────────────────────────────
         elif action == "create_task":
             merged = {**draft, **{k: v for k, v in data.items() if v}}
             name   = merged.get("name", "").strip()
@@ -153,12 +157,10 @@ class TaskController:
             task, _ = self.get_task(task_id)
             return "task_created", task, None, {}
 
-        # ── search_tasks ──────────────────────────────────────────────────────
         elif action == "search_tasks":
             tasks = self.db.get_tasks(search=data.get("query", ""))
             return "task_list", tasks, None, draft
 
-        # ── list_tasks ────────────────────────────────────────────────────────
         elif action == "list_tasks":
             tasks = self.db.get_tasks(status=data.get("status"), category=data.get("category"))
             pf    = data.get("priority")
@@ -166,7 +168,6 @@ class TaskController:
                 tasks = [t for t in tasks if t["priority"] == pf]
             return "task_list", tasks, None, draft
 
-        # ── edit_task ─────────────────────────────────────────────────────────
         elif action == "edit_task":
             tid = str(data.get("task_id", "")).upper().strip()
             upd = data.get("updates", {})
@@ -178,7 +179,6 @@ class TaskController:
             task, _ = self.get_task(tid)
             return "task_edited", task, None, draft
 
-        # ── complete_task ─────────────────────────────────────────────────────
         elif action == "complete_task":
             tid = str(data.get("task_id", "")).upper().strip()
             if not tid:
@@ -189,7 +189,6 @@ class TaskController:
             task, _ = self.get_task(tid)
             return "task_completed", task, None, draft
 
-        # ── delete_task ───────────────────────────────────────────────────────
         elif action == "delete_task":
             tid = str(data.get("task_id", "")).upper().strip()
             if not tid:
@@ -199,7 +198,6 @@ class TaskController:
                 return "error", None, err, draft
             return "task_deleted", {"id": tid}, None, draft
 
-        # ── show_analytics ────────────────────────────────────────────────────
         elif action == "show_analytics":
             return "analytics", self.get_analytics(), None, draft
 
