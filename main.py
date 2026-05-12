@@ -593,27 +593,27 @@ def chat():
             console.print()
 
     def _handle_slash(cmd: str) -> bool:
-        """Handle slash commands. Returns True if handled, False if unknown."""
+        """Handle slash commands. Returns True if handled, None to exit."""
         nonlocal draft
         parts = cmd.strip().split(None, 1)
-        slash = parts[0].lower()
+        slash = parts[0].lower()          # already has no leading /
         arg   = parts[1].strip() if len(parts) > 1 else ""
 
-        if slash in ("/exit", "/quit", "/q"):
+        if slash in ("exit", "quit", "q"):
             console.print("  [dim]Chat closed.[/dim]")
             return None   # signal to exit loop
 
-        elif slash == "/help":
+        elif slash == "help":
             console.print(SLASH_HELP)
 
-        elif slash == "/draft":
+        elif slash == "draft":
             _show_draft()
 
-        elif slash == "/clear":
+        elif slash == "clear":
             draft = {}
             console.print("  [dim]Draft cleared.[/dim]\n")
 
-        elif slash == "/list":
+        elif slash == "list":
             # /list pending | /list Work | /list
             status_map = {"pending": "pending", "done": "completed", "completed": "completed"}
             cat_map    = {c.lower(): c for c in VALID_CATEGORIES}
@@ -629,21 +629,21 @@ def chat():
                 console.print(_task_table(tasks, f"Tasks ({len(tasks)})"))
             console.print()
 
-        elif slash in ("/done", "/complete"):
+        elif slash in ("done", "complete"):
             if not arg:
                 console.print("  [red]Usage:[/red] /done <ID>\n")
             else:
                 ok, err = ctrl.complete_task(arg.upper())
                 console.print(f"  [green]✓ {arg.upper()} done.[/green]\n" if ok else f"  [red]{err}[/red]\n")
 
-        elif slash in ("/del", "/delete"):
+        elif slash in ("del", "delete"):
             if not arg:
                 console.print("  [red]Usage:[/red] /del <ID>\n")
             else:
                 ok, err = ctrl.delete_task(arg.upper())
                 console.print(f"  [dim]Deleted {arg.upper()}.[/dim]\n" if ok else f"  [red]{err}[/red]\n")
 
-        elif slash in ("/search", "/find"):
+        elif slash in ("search", "find"):
             if not arg:
                 console.print("  [red]Usage:[/red] /search <query>\n")
             else:
@@ -651,7 +651,7 @@ def chat():
                 console.print(_task_table(tasks, f"'{arg}' ({len(tasks)})") if tasks else "  [dim]No results.[/dim]")
                 console.print()
 
-        elif slash in ("/stats", "/analytics"):
+        elif slash in ("stats", "analytics"):
             s  = ctrl.get_analytics()
             pc = "green" if s["productivity"] >= 70 else "yellow" if s["productivity"] >= 40 else "red"
             console.print(Panel(
@@ -665,7 +665,7 @@ def chat():
             ))
             console.print()
 
-        elif slash == "/optimize":
+        elif slash == "optimize":
             with console.status("[dim]Building schedule...[/dim]", spinner="dots"):
                 sched, err = ctrl.optimize_schedule()
             if err:
@@ -674,16 +674,16 @@ def chat():
                 console.print(Panel(sched, title="[dim]AI Schedule[/dim]", border_style="dim", padding=(1, 2)))
             console.print()
 
-        elif slash == "/report":
+        elif slash == "report":
             fn = ctrl.export_report()
             console.print(f"  [dim]Report saved:[/dim] [white]{fn}[/white]\n")
 
-        elif slash in ("/add", "/task", "/newtask"):
+        elif slash in ("add", "task", "newtask"):
             draft = {}
             console.print("  [dim]Draft cleared. Tell me about the task you want to add.[/dim]\n")
 
         else:
-            console.print(f"  [dim]Unknown command [white]{slash}[/white]. Type [white]/help[/white] for the list.[/dim]\n")
+            console.print(f"  [dim]Unknown command [white]/{slash}[/white]. Type [white]/help[/white] for the list.[/dim]\n")
 
         return True
 
