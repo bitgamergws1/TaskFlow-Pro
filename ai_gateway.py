@@ -20,7 +20,7 @@ HEADERS          = {
 RETRY_WAIT  = 3   # ← was 25; no reason to wait 25s between retries
 MAX_RETRIES = 1
 
-# ── Validation settings ───────────────────────────────────────────────────────
+# Validation settings
 CHAT_MAX_RETRIES   = 2          # max auto-retries on bad response
 CHAT_RETRY_DELAY   = 3          # seconds between retries
 MIN_REPLY_LENGTH   = 8          # a valid reply must have at least 8 chars
@@ -32,7 +32,7 @@ DEEPSHI    = "deepshi-r2"
 
 ACTION_TAG = "TASKFLOW_ACTION:"
 
-# ── Intent definitions ────────────────────────────────────────────────────────
+# Intent definitions
 
 INTENTS = {
     "create_task":      "User wants to add / create a new task",
@@ -83,9 +83,9 @@ INTENT_STATUS = {
 WEB_SEARCH_INTENTS = {"weather", "general_question"}
 NO_ACTION_INTENTS  = {"weather", "general_question", "chitchat"}
 
-# ── Intent classify system prompt ─────────────────────────────────────────────
+# Intent classify system prompt
 
-# ── Dynamic Intent Rulebook ───────────────────────────────────────────────────
+# Dynamic Intent Rulebook
 # This is the AI-readable rulebook. No hardcoded keywords — the AI uses its own
 # multilingual understanding to match user messages to intents.
 # Add new languages, phrasings, or edge cases here freely.
@@ -174,7 +174,7 @@ complete_task > delete_task > edit_task > create_task > list_tasks > search_task
 5. Trust meaning over keywords — understand intent, not literal words
 """
 
-# ── Intent classify system prompt ─────────────────────────────────────────────
+# Intent classify system prompt
 
 INTENT_CLASSIFY_SYSTEM = """You are a multilingual intent classifier for a task management app.
 
@@ -192,7 +192,7 @@ Rules:
 - Return ONLY the JSON object, no markdown, no explanation
 """.replace("{rulebook}", INTENT_RULEBOOK)
 
-# ── Action Playbook ───────────────────────────────────────────────────────────
+# Action Playbook
 # Situation → Action mapping for the main AI.
 # Language-agnostic: describes WHAT THE USER MEANS, not how they say it.
 # Add new rules here freely — AI applies them using its own understanding.
@@ -342,7 +342,7 @@ ACTION: emit update_draft with new fields. Do NOT re-ask collected fields.
 REPLY: Acknowledge what was added, ask for the next missing field only.
 """
 
-# ── Main chat system prompt ───────────────────────────────────────────────────
+# Main chat system prompt
 
 CHAT_SYSTEM = """You are TaskFlow AI — a sharp, no-filler productivity assistant inside a terminal task manager.
 
@@ -410,7 +410,7 @@ TASKFLOW_ACTION:{{"action":"ACTION_NAME","data":{{...}}}}
 - Direct, human, helpful.
 """.replace("{action_playbook}", ACTION_PLAYBOOK)
 
-# ── Response Validator judge prompt ──────────────────────────────────────────
+# Response Validator judge prompt
 
 JUDGE_SYSTEM = """You are a strict quality checker for an AI assistant's responses.
 
@@ -440,7 +440,7 @@ class AIGateway:
     def _expired(self):
         return date.today() > EXPIRY
 
-    # ── IP → City ─────────────────────────────────────────────────────────────
+    # IP → City
 
     @staticmethod
     def get_city_from_ip() -> str | None:
@@ -450,7 +450,7 @@ class AIGateway:
         except Exception:
             return None
 
-    # ── Block parser ─────────────────────────────────────────────────────────
+    # Block parser
 
     @staticmethod
     def _extract_text(raw) -> str | None:
@@ -476,6 +476,7 @@ class AIGateway:
                 blocks = json.loads(raw)
                 return AIGateway._extract_text(blocks)
             except json.JSONDecodeError:
+                # Not valid JSON array — fall through to object check below
                 pass
 
         if raw.startswith("{"):
@@ -487,6 +488,7 @@ class AIGateway:
                 if block.get("type") in ("reasoning", "thinking"):
                     return None
             except json.JSONDecodeError:
+                # Not valid JSON object — fall through to regex text extraction
                 pass
 
         text_match = re.search(
@@ -502,23 +504,24 @@ class AIGateway:
 
         return raw or None
 
-    # ── Proxy error detector ─────────────────────────────────────────────────
+    # Proxy error detector
 
     _PROXY_ERR_MARKERS = ("too slow", "timed out", "provider", "⚠", "error:", "unavailable")
 
     def _is_proxy_error(self, text: str) -> bool:
         return any(m in text.lower() for m in self._PROXY_ERR_MARKERS)
 
-    # ── Wake-up ping ─────────────────────────────────────────────────────────
+    # Wake-up ping
 
     @staticmethod
     def wake_up():
         try:
             requests.get(PROXY_HEALTH_URL, timeout=10)
         except Exception:
-            pass
+            # Fire-and-forget ping; failure is expected when server is cold-starting
+            return
 
-    # ── Core call ────────────────────────────────────────────────────────────
+    # Core call
 
     def _call(self, model, prompt, history=None, timeout=75, **extra):
         if self._expired():
@@ -653,7 +656,7 @@ class AIGateway:
         cleaned = re.sub(r'^\s*```(?:json)?\s*\{.*?\}\s*```\s*', '', cleaned, flags=re.DOTALL).strip()
         return cleaned or text
 
-    # ── ✅ Thinking-leak scrubber ─────────────────────────────────────────────
+    # ✅ Thinking-leak scrubber
 
     @staticmethod
     def _strip_thinking(text: str) -> str:
@@ -699,7 +702,7 @@ class AIGateway:
         text = re.sub(r'\n{3,}', '\n\n', text)   # collapse excessive blank lines
         return text.strip()
 
-    # ──  Rule-based fast validator ─────────────────────────────────────
+    # Rule-based fast validator
 
     def _fast_validate(self, text: str, intent: str = "") -> tuple[bool, str]:
         """
@@ -757,7 +760,7 @@ class AIGateway:
 
         return True, "ok"
 
-    # ── ✅ NEW: Haiku judge (AI validates AI) ─────────────────────────────────
+    # ✅ NEW: Haiku judge (AI validates AI)
 
     def _judge_response(self, user_msg: str, ai_reply: str) -> tuple[bool, int, str]:
         """
@@ -786,7 +789,7 @@ class AIGateway:
         except (json.JSONDecodeError, ValueError, TypeError):
             return True, 6, f"Judge parse error: {result[:60]}"
 
-    # ── ✅ NEW: Combined validation pipeline ──────────────────────────────────
+    # ✅ NEW: Combined validation pipeline
 
     # Intents where the reply is intentionally short (chart/table renders separately).
     # Skip the AI judge for these — it always rates short replies poorly.
@@ -821,7 +824,7 @@ class AIGateway:
 
         return True, "ok"
 
-    # ── ✅ NEW: Prompt Enhancer ────────────────────────────────────────────────
+    # ✅ NEW: Prompt Enhancer
 
     def enhance_prompt(self, user_message: str, history=None, draft=None) -> str:
         """
@@ -909,7 +912,7 @@ Rewritten message:"""
 
         return enhanced or user_message
 
-    # ── Intent Classifier ─────────────────────────────────────────────────────
+    # Intent Classifier
 
     def classify_intent(self, user_message: str, history=None) -> dict:
         recent = ""
@@ -951,7 +954,7 @@ Rewritten message:"""
                 "status_msg": INTENT_STATUS["unclear"], "needs_web": False,
             }
 
-    # ── Action validator ─────────────────────────────────────────────────────
+    # Action validator
 
     def validate_action(self, intent: str, action_name: str | None) -> tuple[bool, str]:
         if not action_name or intent in NO_ACTION_INTENTS or intent == "unclear":
@@ -970,7 +973,7 @@ Rewritten message:"""
             return True, ""
         return False, f"Expected action for '{intent}' but got '{action_name}'"
 
-    # ── Chat (with validation + auto-retry) ──────────────────────────────────
+    # Chat (with validation + auto-retry)
 
     def chat(
         self,
@@ -989,7 +992,7 @@ Rewritten message:"""
         """
         draft = draft or {}
 
-        # ── Build system prompt contexts ──────────────────────────────────────
+        # Build system prompt contexts
         if draft:
             collected = ", ".join(f"{k}: {v}" for k, v in draft.items() if v)
             remaining = [k for k in ("name", "priority", "due_date", "category") if not draft.get(k)]
@@ -1053,7 +1056,7 @@ Rewritten message:"""
 
         full_prompt = f"{system}\n\nUser: {user_prompt}"
 
-        # ── ✅ Retry loop with validation ─────────────────────────────────────
+        # ✅ Retry loop with validation
         last_err        = None
         validation_log  = []   # track what went wrong across attempts
 
@@ -1080,7 +1083,7 @@ Rewritten message:"""
             is_valid, fail_reason = self._validate_response(user_message, raw, intent=intent_name)
 
             if is_valid:
-                # ── Good response — parse and return ─────────────────────────
+                # Good response — parse and return
                 action, reply = None, raw
                 if ACTION_TAG in raw:
                     parts      = raw.split(ACTION_TAG, 1)
@@ -1126,7 +1129,7 @@ Rewritten message:"""
             f"Try again in a moment. (Last issue: {validation_log[-1] if validation_log else 'unknown'})"
         )
 
-    # ── NL Task Parser ───────────────────────────────────────────────────────
+    # NL Task Parser
 
     def parse_task(self, text: str):
         prompt = (
@@ -1151,7 +1154,7 @@ Rewritten message:"""
         except json.JSONDecodeError:
             return None, f"Parse error: {result[:80]}"
 
-    # ── Schedule Optimizer ───────────────────────────────────────────────────
+    # Schedule Optimizer
 
     def optimize_schedule(self, tasks):
         if not tasks:
@@ -1170,7 +1173,7 @@ Rewritten message:"""
         )
         return self._call(DEEPSHI, prompt, timeout=120)
 
-    # ── Motivation ───────────────────────────────────────────────────────────
+    # Motivation
 
     def get_motivation(self, stats: dict):
         p    = stats.get("productivity", 0)
@@ -1182,7 +1185,7 @@ Rewritten message:"""
             f"Direct, witty, specific. No filler. End with one punchy line."
         )
         return self._call(DEEPSHI_R1, prompt, timeout=30)
-    # ── Multi-Agent: Prompt Decomposer ───────────────────────────────────────
+    # Multi-Agent: Prompt Decomposer
 
     def decompose_prompt(self, user_message: str, history=None) -> list:
         """
@@ -1230,5 +1233,5 @@ Rewritten message:"""
                 ]
                 return valid if valid else fallback
         except (json.JSONDecodeError, TypeError):
+            # Decomposer returned malformed JSON — treat as single intent
             pass
-        return fallback
