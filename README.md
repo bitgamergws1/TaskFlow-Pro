@@ -380,9 +380,9 @@ Sends all pending tasks to the AI, which returns a complete time-blocked daily s
 ### Daily Motivation / Roast
 
 Every dashboard open (`taskflow`) fetches a **personalized AI message** based on your stats:
-- **Productivity < 30%** → savage roast 🔥
-- **Productivity ≥ 70%** → fired-up praise 💪
-- **Streak ≥ 3 days** → streak acknowledgement with 🔥 badge
+- **Productivity < 30%** → savage roast 
+- **Productivity ≥ 70%** → fired-up praise 
+- **Streak ≥ 3 days** → streak acknowledgement with  badge
 
 Fetched asynchronously — never delays dashboard load.
 
@@ -518,7 +518,7 @@ This means TaskFlow works correctly for users in any timezone without any manual
 - [x] Filter tasks by status, priority, or category
 - [x] Category-based task organization
 - [x] Due time support (`HH:MM`) on top of due date
-- [x] **Reminder system** — set `YYYY-MM-DD HH:MM` reminders; daemon fires 🔔 bell in terminal
+- [x] **Reminder system** — set `YYYY-MM-DD HH:MM` reminders; daemon fires  bell in terminal
 - [x] **Recurrence engine** — daily / weekly / weekdays / monthly with optional end date
 - [x] **Soft delete + Recycle bin** — `taskflow bin`, `taskflow restore <ID>`
 - [x] **Weather widget** — dashboard + `taskflow weather` command; IP-auto-detects city
@@ -540,7 +540,7 @@ This means TaskFlow works correctly for users in any timezone without any manual
 - [x] Reminder validation (blocks past times; warns if reminder is after due time)
 - [x] Background Supabase cloud sync (non-blocking, zero client secrets)
 - [x] ASCII productivity analytics with bar charts
-- [x] Streak tracking with 🔥 badge
+- [x] Streak tracking with badge
 - [x] Pomodoro focus timer with live Rich countdown display
 - [x] Markdown report export
 - [x] One-command setup scripts — `run.sh` (Linux/macOS) + `run.bat` (Windows)
