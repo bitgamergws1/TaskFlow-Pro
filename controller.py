@@ -7,7 +7,6 @@ from database import Database
 from ai_gateway import AIGateway
 
 # Actions the AI might return that are valid "no-op" responses
-# (AI replied with text only, no real task action needed)
 _SOFT_PASSTHROUGH_ACTIONS = {
     "general_response", "general_answer", "reply", "text_response",
     "no_action", "none", "chitchat_response", "answer",
@@ -21,8 +20,13 @@ class TaskController:
 
     # ── Task CRUD ─────────────────────────────────────────────────────────────
 
-    def add_manual(self, name, category, priority, due_date, notes):
-        task_id = self.db.add_task(name, category, priority, due_date, notes)
+    def add_manual(self, name, category, priority, due_date, notes,
+                   due_time=None, reminder_at=None, recurrence="none", recurrence_end_date=None):
+        task_id = self.db.add_task(
+            name, category, priority, due_date, notes,
+            due_time=due_time, reminder_at=reminder_at,
+            recurrence=recurrence, recurrence_end_date=recurrence_end_date,
+        )
         return task_id, None
 
     def add_ai(self, natural_text):
@@ -35,6 +39,10 @@ class TaskController:
             priority=parsed.get("priority", "Medium"),
             due_date=parsed.get("due_date"),
             notes=parsed.get("notes"),
+            due_time=parsed.get("due_time"),
+            reminder_at=parsed.get("reminder_at"),
+            recurrence=parsed.get("recurrence", "none"),
+            recurrence_end_date=parsed.get("recurrence_end_date"),
         )
         return task_id, parsed, None
 
@@ -86,6 +94,23 @@ class TaskController:
         self.db.update_task(task_id, **kwargs)
         return True, None
 
+    def set_reminder(self, task_id, reminder_at: str):
+        """Set/update reminder for a task. reminder_at = 'YYYY-MM-DD HH:MM'"""
+        task, err = self.get_task(task_id)
+        if err:
+            return False, err
+        self.db.update_task(task_id, reminder_at=reminder_at, reminder_sent=0)
+        return True, None
+
+    # ── Reminder Daemon ───────────────────────────────────────────────────────
+
+    def get_due_reminders(self):
+        """Fetch tasks whose reminder time has passed and haven't been notified."""
+        return self.db.get_due_reminders()
+
+    def mark_reminder_sent(self, task_id):
+        self.db.mark_reminder_sent(task_id)
+
     # ── Analytics ─────────────────────────────────────────────────────────────
 
     def get_analytics(self):
@@ -100,15 +125,9 @@ class TaskController:
     def validate_action(self, intent: str, action_name: str | None) -> tuple[bool, str]:
         return self.ai.validate_action(intent, action_name)
 
-    # ── ✅ NEW: Prompt Enhancer ───────────────────────────────────────────────
+    # ── Prompt Enhancer ───────────────────────────────────────────────────────
 
     def enhance_prompt(self, user_message: str, history=None, draft=None) -> str:
-        """
-        Clarifies the user's message using conversation history before it
-        hits the classifier. Resolves pronouns, follow-up shortcuts, and
-        ambiguous references to tasks.
-        Returns enhanced message string (original on failure).
-        """
         return self.ai.enhance_prompt(user_message, history=history, draft=draft)
 
     # ── AI Chat ───────────────────────────────────────────────────────────────
@@ -121,17 +140,20 @@ class TaskController:
         intent_info: dict = None,
         location: str = None,
     ):
-        """
-        Returns (reply, action, error).
-        Automatically fetches task_stats from DB and passes to AI.
-        """
         task_stats = self.db.get_analytics()
+
+        _TASK_ID_INTENTS = {"complete_task", "delete_task", "edit_task", "search_tasks"}
+        task_list = None
+        if intent_info and intent_info.get("intent") in _TASK_ID_INTENTS:
+            task_list = self.db.get_tasks(status="pending")
+
         return self.ai.chat(
             user_message,
             history=history,
             draft=draft,
             intent_info=intent_info,
             task_stats=task_stats,
+            task_list=task_list,
             location=location,
         )
 
@@ -147,9 +169,6 @@ class TaskController:
         data   = action_dict.get("data", {})
         draft  = dict(current_draft or {})
 
-        # ── ✅ Soft passthrough: AI returned a "reply-only" pseudo-action ─────
-        # These are not real task actions — AI just gave a conversational answer
-        # and tagged it with a non-standard action name. Treat as no-op.
         if action.lower() in _SOFT_PASSTHROUGH_ACTIONS:
             return "passthrough", None, None, draft
 
@@ -164,6 +183,7 @@ class TaskController:
             preview = {**draft, **{k: v for k, v in data.items() if v}}
             preview.setdefault("priority", "Medium")
             preview.setdefault("category", "General")
+            preview.setdefault("recurrence", "none")
             return "confirm_preview", preview, None, draft
 
         elif action == "create_task":
@@ -177,6 +197,10 @@ class TaskController:
                 priority=merged.get("priority", "Medium"),
                 due_date=merged.get("due_date"),
                 notes=merged.get("notes"),
+                due_time=merged.get("due_time"),
+                reminder_at=merged.get("reminder_at"),
+                recurrence=merged.get("recurrence", "none"),
+                recurrence_end_date=merged.get("recurrence_end_date"),
             )
             task, _ = self.get_task(task_id)
             return "task_created", task, None, {}
@@ -203,16 +227,25 @@ class TaskController:
             task, _ = self.get_task(tid)
             return "task_edited", task, None, draft
 
+        elif action == "set_reminder":
+            tid         = str(data.get("task_id", "")).upper().strip()
+            reminder_at = data.get("reminder_at", "").strip()
+            if not tid or not reminder_at:
+                return "error", None, "Task ID and reminder time required.", draft
+            ok, err = self.set_reminder(tid, reminder_at)
+            if not ok:
+                return "error", None, err, draft
+            task, _ = self.get_task(tid)
+            return "reminder_set", task, None, draft
+
         elif action == "complete_task":
             tid = str(data.get("task_id", "")).upper().strip()
             if not tid:
                 return "error", None, "Task ID required.", draft
             ok, err = self.complete_task(tid)
             if not ok:
-                # AI may have sent task name instead of ID — fuzzy fallback
                 matches = self.db.get_tasks(search=tid, status="pending") if tid else []
                 if not matches:
-                    # also try lowercase original (before .upper())
                     raw_tid = str(data.get("task_id", "")).strip()
                     matches = self.db.get_tasks(search=raw_tid, status="pending")
                 if matches:
@@ -236,9 +269,6 @@ class TaskController:
             return "analytics", self.get_analytics(), None, draft
 
         else:
-            # ── Unknown action: log silently, treat as passthrough ────────────
-            # Don't show "Unknown action" error to user — AI already gave a
-            # text reply above; just skip the action dispatch quietly.
             print(f"  [controller] unknown action '{action}' — skipping silently", flush=True)
             return "passthrough", None, None, draft
 
@@ -274,11 +304,17 @@ class TaskController:
         ]
         for t in tasks:
             icon = "x" if t["status"] == "completed" else "!" if self._is_overdue(t) else " "
+            due  = t.get("due_date") or "no date"
+            if t.get("due_time"):
+                due += f" {t['due_time']}"
+            recur = f" [{t['recurrence']}]" if t.get("recurrence") and t["recurrence"] != "none" else ""
             lines.append(
-                f"- [{icon}] **{t['name']}** | {t['priority']} | {t.get('category','General')} | {t.get('due_date') or 'no date'}"
+                f"- [{icon}] **{t['name']}** | {t['priority']} | {t.get('category','General')} | {due}{recur}"
             )
             if t.get("notes"):
                 lines.append(f"  > {t['notes']}")
+            if t.get("reminder_at") and not t.get("reminder_sent"):
+                lines.append(f"  🔔 Reminder: {t['reminder_at']}")
         fn = f"report_{today}.md"
         with open(fn, "w", encoding="utf-8") as f:
             f.write("\n".join(lines))
