@@ -8,6 +8,7 @@ import re
 import time
 import requests
 from datetime import date
+from timezone_utils import today_local, tz_label
 
 PROXY_URL        = "https://devnest-proxy-server.onrender.com/v1/proxy/ai"
 PROXY_HEALTH_URL = "https://devnest-proxy-server.onrender.com/health"
@@ -16,7 +17,7 @@ HEADERS          = {
     "Content-Type":    "application/json",
 }
 
-RETRY_WAIT  = 25
+RETRY_WAIT  = 3   # ← was 25; no reason to wait 25s between retries
 MAX_RETRIES = 1
 
 # ── Validation settings ───────────────────────────────────────────────────────
@@ -25,9 +26,9 @@ CHAT_RETRY_DELAY   = 3          # seconds between retries
 MIN_REPLY_LENGTH   = 8          # a valid reply must have at least 8 chars
 JUDGE_THRESHOLD    = 5          # judge score below this → retry (0-10 scale)
 
-EXPIRY  = date(2026, 5, 20)
-CLAUDE  = "claude-haiku-4-5-20251001"
-DEEPSHI = "deepshi-r2"
+EXPIRY     = date(2026, 5, 20)
+DEEPSHI_R1 = "deepshi-r1"   # replaces Claude for all classifier/judge/utility calls
+DEEPSHI    = "deepshi-r2"
 
 ACTION_TAG = "TASKFLOW_ACTION:"
 
@@ -55,6 +56,7 @@ INTENT_TO_ACTIONS = {
     "complete_task":    {"complete_task"},
     "delete_task":      {"delete_task"},
     "edit_task":        {"edit_task"},
+    "set_reminder":     {"set_reminder", "edit_task"},
     "analytics":        {"show_analytics"},
     "optimize":         set(),
     "weather":          set(),
@@ -223,9 +225,59 @@ REPLY: Acknowledge completion, show what's still pending.
 SITUATION: User describes a future to-do, something they NEED to do, or explicitly
            asks to add/create/save a task.
 SIGNALS: "mujhe kal X karna hai", "remind me to X", "add a task for X",
-         "X karna hai note kar lo", "save this: X"
-ACTION: emit update_draft with extracted fields, ask for missing ones one at a time
-REPLY: Confirm what you captured, ask for 1-2 missing fields (not all at once)
+         "X karna hai note kar lo", "save this: X", "task banana hai", "note kar"
+
+TASK FIELDS — what to collect, in priority order:
+  ① name        REQUIRED — always extract first. If unclear, ask.
+  ② due_date    Ask: "Kab tak karna hai?" / "By when?"
+                ⚠ PAST DATE RULE: If user gives a date that is before today (check via context):
+                  - Do NOT silently accept it.
+                  - Say: "Ye date toh past mein hai ({their_date}). Sahi date batao?"
+                  - Ask again. Only accept today or future dates.
+                  - If user insists it's intentional, accept but add a note: "User confirmed past date."
+  ③ due_time    Ask ONLY if task is time-specific ("dawai 8 baje", "meeting 3pm")
+                or if user says "remind me at X". Format: HH:MM 24h.
+                Skip for vague tasks (no specific time needed).
+  ④ priority    Ask: "Kitna important hai? High/Medium/Low?" — skip if obvious from context
+                (e.g. "urgent" → High, "kabhi bhi" → Low)
+  ⑤ category    Guess from context; ask only if genuinely unclear
+                Work/Study/Personal/Health/Finance/General
+  ⑥ reminder_at Ask: "Yaad dilana chahoge? Agar haan, kab?" — ONLY ask this if:
+                  - user says "remind me", "yaad dilana", "bhoolna nahi chahta"
+                  - OR task has a due_time (natural to set reminder)
+                Format: "YYYY-MM-DD HH:MM"
+  ⑦ recurrence  Ask: "Ye roz karna hai ya ek baar?" — ONLY ask if task sounds repeated
+                  - "roz paani peena", "daily standup", "har hafte report"
+                Values: none / daily / weekly / weekdays / monthly
+  ⑧ notes       Optional — offer: "Koi extra note?" only after other fields done
+
+MANDATORY FIELDS — task CANNOT be created without these 4:
+  ✦ name      — always required, no exceptions
+  ✦ due_date  — always required. If user resists: "Ek rough date bhi chalegi, bilkul exact nahi chahiye."
+  ✦ priority  — always required. If unclear: guess from context, then confirm: "High rakh dun?"
+  ✦ category  — always required. Guess from context (gym→Health, project→Work). Confirm if unsure.
+
+  ⚠ NEVER emit confirm_task or create_task if ANY of the 4 above are missing.
+  ⚠ NEVER emit create_task directly — always emit confirm_task first so user can review.
+
+OPTIONAL FIELDS — ask only when contextually relevant:
+  ◦ due_time       — only if task is time-specific or user mentions a time
+  ◦ reminder_at    — only if user says "remind", "yaad dilana", "bhoolna nahi chahta"
+  ◦ recurrence     — only if task sounds repeated (roz, daily, har hafte)
+  ◦ notes          — offer last: "Koi extra detail add karu?"
+
+COLLECTION STRATEGY:
+  1. Extract everything possible from the first message → emit update_draft.
+  2. Ask for missing MANDATORY fields one at a time (name → due_date → priority → category).
+  3. Once all 4 mandatory fields are in draft → emit confirm_task for preview.
+  4. After user confirms ("haan", "save karo", "yes") → emit create_task.
+  5. User can skip optional fields at any point — never block on them.
+  6. If user says "bas save karo" / "create karo" but mandatory fields are still missing
+     → do NOT create. Politely say which field is still needed.
+     Example: "Ek kaam — due date batao, phir save kar deta hun."
+
+REPLY: In user's language — confirm what you captured, ask exactly ONE missing field.
+       Example: "Gym jana note kar liya! Kab tak karna hai?" (not "Please provide name, priority, date...")
 
 ── RULE 4: User wants to see their tasks ──────────────────────────────────────
 SITUATION: User wants to view/see their current task list.
@@ -251,9 +303,20 @@ REPLY: Confirm what was changed.
 
 ── RULE 7: User asks for stats / productivity ─────────────────────────────────
 SITUATION: User wants numbers — how many done, pending, streak, productivity rate.
-SIGNALS: "kitne complete kiye", "meri productivity", "stats", "streak kitna hai"
+SIGNALS: "kitne complete kiye", "meri productivity", "stats", "streak kitna hai",
+         "summarize kro", "batao kya chal raha hai", "progress kya hai"
 ACTION: emit show_analytics
-REPLY: Brief summary in user's language.
+REPLY: Give a SHORT but MEANINGFUL human summary in user's language. DO NOT just
+       recite raw numbers like "1 total, 0 pending" — that's what the chart below
+       already shows. Instead:
+       1. Lead with ONE overall verdict: "Sab kuch on track hai", "Achi progress hai",
+          "Thodi struggle ho rahi hai", etc.
+       2. Highlight what's notable: streak, productivity %, overdue count if > 0.
+       3. If overdue > 0 → mention it with a nudge.
+       4. If productivity is 100% or streak > 3 → give a small praise.
+       5. Keep it 2-3 lines MAX. Natural, conversational, in user's language.
+       EXAMPLE (Hinglish): "Ek hi task tha aur wo complete bhi ho gaya — 100% productivity!
+       Abhi koi pending nahi hai. Ek naya task add karo kuch productive karne ke liye."
 
 ── RULE 8: User asks a general knowledge question ─────────────────────────────
 SITUATION: User asks about a topic (health, tips, facts, how-to) that is NOT
@@ -297,8 +360,15 @@ Never switch language. Never translate.
 {task_stats}
 
 - total_tasks=0 → user has NO tasks. Say so clearly. Offer to add one.
+- PAST DATE RULE: If user provides a due_date that is before TODAY ({today}), always flag it.
+  Say: "Ye date past mein hai — sahi date kya hai?" Do NOT silently save past dates.
 - Never show a task list when there are 0 tasks — just say so in plain text.
 - If overdue > 0, mention it when user asks about tasks or analytics.
+
+=== PENDING TASKS — USE EXACT IDs ===
+{task_list_context}
+When emitting complete_task / delete_task / edit_task → copy the ID EXACTLY from above.
+NEVER invent or guess a task_id. If no match found → ask user to clarify.
 
 === ⚠ ANTI-HALLUCINATION RULE (CRITICAL) ===
 You only know task COUNTS (total, pending, completed, overdue) from stats above.
@@ -322,13 +392,14 @@ If web search results are in the prompt: use them to answer naturally. Don't say
 Append at the very END of your reply — nothing after it:
 TASKFLOW_ACTION:{{"action":"ACTION_NAME","data":{{...}}}}
 
-  update_draft   → {{name?, priority?, due_date?, category?, notes?}}
+  update_draft   → {{name?, priority?, due_date?, due_time?, category?, notes?, reminder_at?, recurrence?, recurrence_end_date?}}
   confirm_task   → full task fields for preview
-  create_task    → {{name, priority, due_date, category, notes?}}
+  create_task    → {{name, priority, due_date, due_time?, category, notes?, reminder_at?, recurrence?, recurrence_end_date?}}
   clear_draft    → {{}}
   search_tasks   → {{query}}
   list_tasks     → {{status?, category?, priority?}}
-  edit_task      → {{task_id, updates:{{field:value,...}}}}
+  edit_task      → {{task_id, updates:{{field:value,...}}}}  -- valid fields: name,category,priority,due_date,due_time,notes,reminder_at,recurrence
+  set_reminder   → {{task_id, reminder_at: "YYYY-MM-DD HH:MM"}}  -- use when user asks to remind about existing task
   complete_task  → {{task_id}}
   delete_task    → {{task_id}}
   show_analytics → {{}}
@@ -354,6 +425,8 @@ IMPORTANT EXCEPTIONS — these are valid responses, score them 8+:
   when the user asked to list/show tasks (the system shows a table separately)
 - Completion confirmations like "✓ Done!" or "Ho gaya!" are valid
 - A reply that says only "Theek hai." or "Ok." after agreeing to something is valid
+- Analytics summaries that give an overall verdict + highlights are valid even if they
+  don't repeat every raw number (the chart renders separately — repetition = bad)
 
 Return ONLY a JSON object, nothing else:
 {"score": <0-10>, "reason": "<one short sentence>", "is_valid": <true|false>}
@@ -385,19 +458,16 @@ class AIGateway:
             return None
 
         if isinstance(raw, list):
+            # ONLY extract "text" type blocks — NEVER fall back to thinking/reasoning.
+            # Thinking blocks are internal model cognition; leaking them causes validator
+            # failures because they start with JSON fragments, symbols, or raw markdown.
             text_parts = [
                 b.get("text", "")
                 for b in raw
                 if isinstance(b, dict) and b.get("type") == "text"
             ]
             result = " ".join(text_parts).strip()
-            if not result:
-                result = " ".join(
-                    b.get("content", b.get("text", ""))
-                    for b in raw
-                    if isinstance(b, dict) and b.get("type") in ("reasoning", "thinking")
-                ).strip()
-            return result or None
+            return result or None   # Return None if no text block → triggers retry
 
         raw = str(raw).strip()
 
@@ -413,8 +483,9 @@ class AIGateway:
                 block = json.loads(raw)
                 if block.get("type") == "text":
                     return block.get("text", "").strip() or None
+                # Skip reasoning/thinking blocks entirely
                 if block.get("type") in ("reasoning", "thinking"):
-                    return (block.get("content") or block.get("text") or "").strip() or None
+                    return None
             except json.JSONDecodeError:
                 pass
 
@@ -425,12 +496,9 @@ class AIGateway:
         if text_match:
             return text_match.group(1).replace('\\"', '"').replace("\\n", "\n").strip()
 
-        reasoning_match = re.search(
-            r'"type"\s*:\s*"(?:reasoning|thinking)".*?"(?:content|text)"\s*:\s*"((?:[^"\\]|\\.)*)"',
-            raw, re.DOTALL
-        )
-        if reasoning_match:
-            return reasoning_match.group(1).replace('\\"', '"').replace("\\n", "\n").strip()
+        # If raw looks like a thinking/reasoning block, discard it
+        if re.search(r'"type"\s*:\s*"(?:reasoning|thinking)"', raw):
+            return None
 
         return raw or None
 
@@ -482,11 +550,28 @@ class AIGateway:
                     return None, f"Proxy error HTTP {resp.status_code}."
 
                 data = resp.json()
-                raw  = (
-                    data.get("response") or data.get("reply") or data.get("content")
+
+                # Main server returns {"reply": "clean string", "thinking": "...", "status": "success"}
+                # Priority: reply > response > content > message > text > output
+                # If "reply" is a clean string (which it always is from /api/deepshi-chat),
+                # use it directly without running _extract_text on it.
+                raw = (
+                    data.get("reply") or data.get("response") or data.get("content")
                     or data.get("message") or data.get("text") or data.get("output")
                 )
-                text = self._extract_text(raw)
+
+                # If raw is already a plain string (most common case), use it directly.
+                # Only run _extract_text when raw is a list/dict (block format).
+                if isinstance(raw, str):
+                    text = raw.strip() or None
+                else:
+                    text = self._extract_text(raw)
+
+                # Scrub any reasoning/thinking content that leaked into the reply.
+                # Happens when parse_deepshi_sse()'s except-fallback appends raw
+                # SSE chunks (containing reasoning_content) to the text buffer.
+                if text:
+                    text = self._strip_thinking(text) or None
 
                 if text and self._is_proxy_error(text):
                     return None, "AI is taking too long. Please try again in a moment."
@@ -508,18 +593,111 @@ class AIGateway:
 
         return None, "Request failed after retry."
 
+    def _call_with_r1_fallback(self, prompt, history=None, timeout=45, **extra):
+        """
+        Tries deepshi-r2 first. If it returns 504/502/503 or times out,
+        immediately falls back to deepshi-r1 — no 25s sleep, no hang.
+        Returns (text, error, used_model).
+
+        Timeout strategy (independent of caller's `timeout` param):
+          r2 = 70s  — slow model, needs runway; was timing out at 45s
+          r1 = 35s  — fast model, 35s is plenty; keeps total worst-case at ~105s
+        """
+        R2_TIMEOUT = 70   # r2 is slow — give it room to breathe
+        R1_TIMEOUT = 35   # r1 is fast — no need to wait longer
+
+        # --- Attempt r2 with a short-circuit timeout ---
+        payload = {
+            "model":   DEEPSHI,
+            "prompt":  prompt,
+            "history": (history or [])[-12:],
+            **extra,
+        }
+        try:
+            resp = requests.post(PROXY_URL, json=payload, headers=HEADERS, timeout=R2_TIMEOUT)
+            if resp.status_code == 200:
+                data = resp.json()
+                raw  = (
+                    data.get("reply") or data.get("response") or data.get("content")
+                    or data.get("message") or data.get("text") or data.get("output")
+                )
+                text = raw.strip() if isinstance(raw, str) else self._extract_text(raw)
+                if text:
+                    text = self._strip_thinking(text) or None
+                if text and not self._is_proxy_error(text):
+                    return text, None, DEEPSHI
+            # r2 returned non-200 — fall through to r1
+            print(f"  [fallback] r2 returned HTTP {resp.status_code}, switching to r1", flush=True)
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+            print(f"  [fallback] r2 timed out ({e}), switching to r1", flush=True)
+        except Exception as e:
+            print(f"  [fallback] r2 error ({e}), switching to r1", flush=True)
+
+        # --- Fall back to r1 ---
+        text, err = self._call(DEEPSHI_R1, prompt, history=history, timeout=R1_TIMEOUT, **extra)
+        return text, err, DEEPSHI_R1
+
     @staticmethod
     def _scrub_leaked_json(text: str) -> str:
         """
         DEEPSHI sometimes leaks a JSON blob into the text portion just before
-        TASKFLOW_ACTION (or instead of it). Strip any trailing {...} or {...}
-        that looks like an action object from the end of the reply text.
+        TASKFLOW_ACTION (or instead of it). Strip any trailing OR leading {...}
+        that looks like an action object from the reply text.
         """
-        # Remove trailing JSON objects: optional whitespace then {...}
+        # Remove trailing JSON objects
         cleaned = re.sub(r'\s*\{[^{}]*"action"\s*:[^{}]*\}\s*$', '', text).strip()
         # Also remove trailing code-fenced JSON blocks
         cleaned = re.sub(r'\s*```(?:json)?\s*\{.*?\}\s*```\s*$', '', cleaned, flags=re.DOTALL).strip()
+        # NEW: also strip LEADING action JSON blobs (model sometimes puts action first)
+        cleaned = re.sub(r'^\s*\{[^{}]*"action"\s*:[^{}]*\}\s*', '', cleaned).strip()
+        cleaned = re.sub(r'^\s*```(?:json)?\s*\{.*?\}\s*```\s*', '', cleaned, flags=re.DOTALL).strip()
         return cleaned or text
+
+    # ── ✅ Thinking-leak scrubber ─────────────────────────────────────────────
+
+    @staticmethod
+    def _strip_thinking(text: str) -> str:
+        """
+        Strips leaked reasoning/thinking content from Deepshi SSE replies.
+
+        Root cause: parse_deepshi_sse() in main.py has an `except` fallback
+        that does `content += data` — meaning raw SSE lines (JSON blobs with
+        reasoning_content) get appended to the text reply when JSON parsing
+        fails on a chunk.
+
+        We fix this on the client side so enable_thinking=True can stay ON
+        (better output quality) without poisoning the user-facing text.
+
+        What we strip:
+        1. Raw SSE lines leaked verbatim  → `data: {...}`
+        2. <thinking>...</thinking> style XML blocks
+        3. Orphaned JSON fragments with reasoning_content key
+        4. Leading/trailing whitespace after cleaning
+        """
+        if not text:
+            return text
+
+        # 1. Remove raw SSE data lines that leaked into the reply
+        #    e.g. `data: {"choices":[{"delta":{"reasoning_content":"…"}}]}`
+        text = re.sub(
+            r'data:\s*\{[^\n]*"reasoning_content"[^\n]*\}\s*',
+            '', text
+        )
+        # Generic SSE data: lines that look like raw event-stream fragments
+        text = re.sub(r'(?m)^data:\s*\{.*?\}\s*$', '', text)
+
+        # 2. XML-style thinking blocks  <thinking>…</thinking>
+        text = re.sub(r'<think(?:ing)?>.*?</think(?:ing)?>', '', text, flags=re.DOTALL)
+
+        # 3. Orphan JSON objects containing reasoning_content anywhere in text
+        text = re.sub(
+            r'\{[^{}]*"reasoning_content"\s*:[^{}]*\}',
+            '', text
+        )
+
+        # 4. Trailing/leading artefacts left by above passes
+        text = re.sub(r'\n{3,}', '\n\n', text)   # collapse excessive blank lines
+        return text.strip()
 
     # ── ✅ NEW: Rule-based fast validator ─────────────────────────────────────
 
@@ -535,12 +713,13 @@ class AIGateway:
         t = text.strip()
 
         # Strip leading markdown formatting before checking start character
-        # (DEEPSHI sometimes returns **bold** or # heading responses — that's fine)
-        t_check = re.sub(r'^[\*_#]+\s*', '', t)
+        # (DEEPSHI sometimes returns **bold**, # heading, or `inline code` — all fine)
+        # ← backtick added: model wraps analytics/stats replies in `...` code spans
+        t_check = re.sub(r'^[\*_#`]+\s*', '', t)
 
         # Starts with TRULY garbage chars: JSON fragments, brackets, pipes, slashes
-        # Note: !, ?, ., #, * removed — these appear in valid markdown/emoji responses
-        if re.match(r'^[,\{\}\[\]<>|\\\/^&~`]+', t_check or t):
+        # Note: !, ?, ., #, *, ` removed from this set — they appear in valid responses
+        if re.match(r'^[,\{\}\[\]<>|\\\/^&~]+', t_check or t):
             return False, "Response starts with punctuation/symbols"
 
         # Ends abruptly mid-word or with open bracket
@@ -550,6 +729,21 @@ class AIGateway:
         # Contains raw JSON key-value fragments (after all cleanup, this is a real problem)
         if re.search(r'"action"\s*:\s*"[a-z_]+"', t):
             return False, "Response still contains action JSON in text body"
+
+        # Detect proxy/model error responses that slip through as HTTP 200
+        # These look like valid text but are actually error messages from the model/proxy
+        _ERROR_STARTERS = (
+            "i'm sorry, i ", "i am sorry, i ", "i apologize",
+            "sorry, i ", "sorry, there ", "sorry, the ",
+            "an error occurred", "i encountered an error",
+            "i cannot access", "i don't have access", "i do not have access",
+            "unable to process", "failed to process",
+            "i'm unable to", "i am unable to",
+        )
+        t_lower = t.lower()
+        for phrase in _ERROR_STARTERS:
+            if t_lower.startswith(phrase):
+                return False, f"Response appears to be a model/proxy error message"
 
         # Pure whitespace / newlines
         if not t.replace('\n', '').replace('\r', '').strip():
@@ -577,7 +771,7 @@ class AIGateway:
             f"AI reply: \"{ai_reply[:500]}\"\n\n"
             f"JSON:"
         )
-        result, err = self._call(CLAUDE, prompt, timeout=12)
+        result, err = self._call(DEEPSHI_R1, prompt, timeout=12)
         if err or not result:
             # If judge itself fails, assume valid (don't block forever)
             return True, 6, "Judge unavailable — assuming valid"
@@ -594,32 +788,33 @@ class AIGateway:
 
     # ── ✅ NEW: Combined validation pipeline ──────────────────────────────────
 
-    def _validate_response(self, user_msg: str, raw_reply: str) -> tuple[bool, str]:
-        """
-        Stage 1: fast heuristics (no API call)
-        Stage 2: Haiku judge (only if Stage 1 passes)
-        Returns (is_valid, failure_reason)
+    # Intents where the reply is intentionally short (chart/table renders separately).
+    # Skip the AI judge for these — it always rates short replies poorly.
+    _JUDGE_SKIP_INTENTS = {"analytics", "list_tasks", "search_tasks", "complete_task", "delete_task"}
 
-        Cleans the reply in two passes before validation:
-        1. Strip TASKFLOW_ACTION tag (internal protocol JSON)
-        2. Strip any leaked action JSON that DEEPSHI leaked into the text body
-        Both the fast checker and judge only see the clean user-facing text.
-        """
+    def _validate_response(self, user_msg: str, raw_reply: str, intent: str = "") -> tuple[bool, str]:
         # Pass 1: strip action tag
         reply_clean = (
             raw_reply.split(ACTION_TAG, 1)[0].strip()
             if ACTION_TAG in raw_reply
             else raw_reply
         )
-        # Pass 2: strip any leaked action JSON from end of text body
+        # Pass 2: strip leaked action JSON
         reply_clean = self._scrub_leaked_json(reply_clean)
 
-        # Stage 1 — instant rules (on double-cleaned text)
+        # Pass 3: strip any surviving think/thinking tags
+        reply_clean = self._strip_thinking(reply_clean)
+
+        # Stage 1 — fast rules
         fast_ok, fast_reason = self._fast_validate(reply_clean)
         if not fast_ok:
             return False, f"[fast-check] {fast_reason}"
 
-        # Stage 2 — AI judge (never sees action JSON)
+        # Stage 2 — AI judge (skipped for intents where short reply is expected)
+        if intent in self._JUDGE_SKIP_INTENTS:
+            print(f"  [validator] judge skipped for intent='{intent}' — fast-check passed", flush=True)
+            return True, "ok"
+
         judge_ok, score, judge_reason = self._judge_response(user_msg, reply_clean)
         if not judge_ok:
             return False, f"[judge score={score}] {judge_reason}"
@@ -695,7 +890,7 @@ User's latest message: "{user_message}"
 
 Rewritten message:"""
 
-        result, err = self._call(CLAUDE, prompt, timeout=12)
+        result, err = self._call(DEEPSHI_R1, prompt, timeout=12)
         if err or not result:
             return user_message
 
@@ -722,7 +917,7 @@ Rewritten message:"""
             + f"User message: \"{user_message}\"\n\nJSON:"
         )
 
-        result, err = self._call(CLAUDE, prompt, timeout=15)
+        result, err = self._call(DEEPSHI_R1, prompt, timeout=15)
         if err or not result:
             return {
                 "intent": "unclear", "entities": {},
@@ -776,6 +971,7 @@ Rewritten message:"""
         draft: dict = None,
         intent_info: dict = None,
         task_stats: dict = None,
+        task_list: list = None,
         location: str = None,
     ):
         """
@@ -807,6 +1003,16 @@ Rewritten message:"""
         else:
             stats_ctx = "Task stats unavailable."
 
+        if task_list:
+            task_lines = "\n".join(
+                f"  ID={t['id']} | {t['name']} | {t['priority']} | "
+                f"{t.get('category','General')} | due={t.get('due_date') or 'none'}"
+                for t in task_list
+            )
+            task_list_ctx = f"Pending tasks:\n{task_lines}"
+        else:
+            task_list_ctx = "Not loaded — do not invent task IDs."
+
         intent_name = (intent_info or {}).get("intent", "unclear")
         intent_ctx  = (
             f"Classified intent: {intent_name} — {INTENTS.get(intent_name, '')}\n"
@@ -824,9 +1030,10 @@ Rewritten message:"""
 
         system = (
             CHAT_SYSTEM
-            .replace("{today}",            date.today().isoformat())
+            .replace("{today}",            today_local().isoformat())
             .replace("{draft_context}",    draft_ctx)
             .replace("{task_stats}",       stats_ctx)
+            .replace("{task_list_context}", task_list_ctx)
             .replace("{intent_context}",   intent_ctx)
             .replace("{location_context}", loc_ctx)
         )
@@ -844,14 +1051,15 @@ Rewritten message:"""
 
         for attempt in range(1, CHAT_MAX_RETRIES + 2):   # +2 → 1 original + N retries
             raw, err = self._call(
-                DEEPSHI,
+                DEEPSHI_R1,
                 full_prompt,
                 history=history,
-                timeout=120,
+                timeout=45,
                 enable_thinking=True,
                 session_key="taskflow_chat",
                 web_search=needs_web,
             )
+            used_model = DEEPSHI_R1
 
             if err or not raw:
                 last_err = err or "No response."
@@ -861,7 +1069,7 @@ Rewritten message:"""
                 return None, None, last_err
 
             # Run validation pipeline
-            is_valid, fail_reason = self._validate_response(user_message, raw)
+            is_valid, fail_reason = self._validate_response(user_message, raw, intent=intent_name)
 
             if is_valid:
                 # ── Good response — parse and return ─────────────────────────
@@ -915,11 +1123,18 @@ Rewritten message:"""
     def parse_task(self, text: str):
         prompt = (
             f'Parse this task. Return ONLY a JSON object, no markdown.\n'
-            f'Fields: name (str), priority (High|Medium|Low), due_date (YYYY-MM-DD|null), '
-            f'category (Work|Study|Personal|Health|Finance|General), notes (str|null)\n\n'
+            f'Fields:\n'
+            f'  name (str, required), priority (High|Medium|Low), '
+            f'category (Work|Study|Personal|Health|Finance|General),\n'
+            f'  due_date (YYYY-MM-DD|null), '
+            f'due_time (HH:MM 24h|null — e.g. "8 baje"→"08:00", "9pm"→"21:00"),\n'
+            f'  reminder_at ("YYYY-MM-DD HH:MM"|null — set when user says remind/yaad/alert),\n'
+            f'  recurrence (none|daily|weekly|weekdays|monthly — "roz"→daily, "har hafte"→weekly),\n'
+            f'  recurrence_end_date (YYYY-MM-DD|null), notes (str|null)\n'
+            f'Today is {today_local().isoformat()} ({tz_label()}).\n'            f'IMPORTANT: due_date must be today or in the future. If user gives a past date,\n'            f'set due_date to null and add a note in the notes field: "User gave past date: <their date>".\n\n'
             f'Input: "{text}"\nJSON:'
         )
-        result, err = self._call(CLAUDE, prompt, timeout=30)
+        result, err = self._call(DEEPSHI_R1, prompt, timeout=30)
         if err or not result:
             return None, err or "No response."
         try:
@@ -958,7 +1173,7 @@ Rewritten message:"""
             f"{stats.get('overdue')} overdue, {p}% rate, {stats.get('streak')}-day streak.\n"
             f"Direct, witty, specific. No filler. End with one punchy line."
         )
-        return self._call(CLAUDE, prompt, timeout=30)
+        return self._call(DEEPSHI_R1, prompt, timeout=30)
     # ── Multi-Agent: Prompt Decomposer ───────────────────────────────────────
 
     def decompose_prompt(self, user_message: str, history=None) -> list:
@@ -992,7 +1207,7 @@ Rewritten message:"""
         )
 
         fallback = [{"sub_message": user_message, "intent": "unclear"}]
-        result, err = self._call(CLAUDE, prompt, timeout=15)
+        result, err = self._call(DEEPSHI_R1, prompt, timeout=15)
         if err or not result:
             return fallback
         try:
