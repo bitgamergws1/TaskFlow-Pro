@@ -1089,7 +1089,8 @@ def chat():
     ctrl    = _get_ctrl()
     history = []
     draft   = {}
-
+ # ── Detect location once for weather queries ──────────────────────────
+    _user_location = _load_city() or _detect_city_from_ip()
     # Start reminder daemon — checks every 30s for due reminders
     import threading as _rt
     _rt.Thread(target=_reminder_daemon, args=(ctrl, console), daemon=True).start()
@@ -1276,6 +1277,7 @@ def chat():
                     history=history,
                     draft=draft,
                     intent_info=_intent_info,
+                    location=_user_location,
                 )
 
             reply, action, err = _live_thinking_call(_do_chat, intent_name)
