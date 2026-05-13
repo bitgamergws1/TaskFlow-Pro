@@ -18,7 +18,7 @@ class TaskController:
         self.db = Database()
         self.ai = AIGateway()
 
-    # ── Task CRUD ─────────────────────────────────────────────────────────────
+    # Task CRUD────────────────────────────────────────────────────────────
 
     def add_manual(self, name, category, priority, due_date, notes,
                    due_time=None, reminder_at=None, recurrence="none", recurrence_end_date=None):
@@ -102,7 +102,7 @@ class TaskController:
         self.db.update_task(task_id, reminder_at=reminder_at, reminder_sent=0)
         return True, None
 
-    # ── Reminder Daemon ───────────────────────────────────────────────────────
+    # Reminder Daemon
 
     def get_due_reminders(self):
         """Fetch tasks whose reminder time has passed and haven't been notified."""
@@ -111,12 +111,12 @@ class TaskController:
     def mark_reminder_sent(self, task_id):
         self.db.mark_reminder_sent(task_id)
 
-    # ── Analytics ─────────────────────────────────────────────────────────────
+    # Analytics
 
     def get_analytics(self):
         return self.db.get_analytics()
 
-    # ── Intent & Validation ───────────────────────────────────────────────────
+    # Intent & Validation
 
     def classify_intent(self, user_message: str, history=None) -> dict:
         """Fast Haiku intent classifier. Never raises."""
@@ -125,12 +125,12 @@ class TaskController:
     def validate_action(self, intent: str, action_name: str | None) -> tuple[bool, str]:
         return self.ai.validate_action(intent, action_name)
 
-    # ── Prompt Enhancer ───────────────────────────────────────────────────────
+    # Prompt Enhancer
 
     def enhance_prompt(self, user_message: str, history=None, draft=None) -> str:
         return self.ai.enhance_prompt(user_message, history=history, draft=draft)
 
-    # ── AI Chat ───────────────────────────────────────────────────────────────
+    # AI Chat
 
     def chat(
         self,
@@ -272,7 +272,7 @@ class TaskController:
             print(f"  [controller] unknown action '{action}' — skipping silently", flush=True)
             return "passthrough", None, None, draft
 
-    # ── AI Features ───────────────────────────────────────────────────────────
+    # AI Features
 
     def optimize_schedule(self):
         pending = self.db.get_tasks(status="pending")
@@ -283,7 +283,7 @@ class TaskController:
     def get_motivation(self):
         return self.ai.get_motivation(self.db.get_analytics())
 
-    # ── Export ────────────────────────────────────────────────────────────────
+    # Export
 
     def export_report(self):
         tasks = self.db.get_tasks()
