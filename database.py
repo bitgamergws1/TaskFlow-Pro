@@ -40,7 +40,7 @@ class Database:
     def __init__(self):
         self._init_db()
 
-    # ── Connection ────────────────────────────────────────────────────────────
+    # Connection
 
     def _conn(self):
         conn = sqlite3.connect(DB_PATH)
@@ -76,7 +76,7 @@ class Database:
                     pass  # Column already exists — skip silently
             conn.commit()
 
-    # ── Write Operations ──────────────────────────────────────────────────────
+    # Write Operations
 
     def add_task(self, name, category="General", priority="Medium",
                  due_date=None, notes=None, due_time=None,
@@ -157,7 +157,7 @@ class Database:
             )
             conn.commit()
 
-    # ── Read Operations ───────────────────────────────────────────────────────
+    # Read Operations
 
     def get_task(self, task_id):
         with self._conn() as conn:
@@ -260,7 +260,7 @@ class Database:
                 break
         return streak
 
-    # ── Proxy-Routed Supabase Sync ────────────────────────────────────────────
+    # Proxy-Routed Supabase Sync
 
     def _background_sync(self, task_id):
         t = threading.Thread(target=self._do_sync, args=(task_id,), daemon=True)
@@ -279,4 +279,5 @@ class Database:
             }
             requests.post(SYNC_URL, json=payload, headers=SYNC_HEADERS, timeout=12)
         except Exception:
-            pass
+            # Sync failures are non-critical; local DB is source of truth
+            return
