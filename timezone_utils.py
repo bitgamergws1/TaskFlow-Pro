@@ -21,18 +21,18 @@ import threading
 from datetime import datetime, date, timezone, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-# ── Cache paths ───────────────────────────────────────────────────────────────
+# Cache paths
 _TZ_CACHE_FILE = os.path.join(os.path.expanduser("~"), ".taskflow_tz")
 _IPINFO_URL    = "https://ipinfo.io/json"
 _TIMEOUT       = 3          # seconds — fast, non-blocking feel
 _REFRESH_DAYS  = 7          # re-detect after this many days (travel etc.)
 
-# ── In-process singleton ──────────────────────────────────────────────────────
+# In-process singleton
 _cached_tz: ZoneInfo | None = None
 _lock = threading.Lock()
 
 
-# ── Public API ────────────────────────────────────────────────────────────────
+# Public API
 
 def get_tz() -> ZoneInfo:
     """Return the best available ZoneInfo for this user. Never raises."""
@@ -76,7 +76,7 @@ def refresh_tz():
     threading.Thread(target=get_tz, daemon=True).start()
 
 
-# ── Resolution chain ──────────────────────────────────────────────────────────
+# Resolution chain
 
 def _resolve_tz() -> ZoneInfo:
     # Step 1 — file cache (skip if stale)
@@ -95,17 +95,11 @@ def _resolve_tz() -> ZoneInfo:
     if tz:
         return tz
 
-    # Step 4 — absolute fallback.
-    # ZoneInfo("UTC") requires the tzdata package on Windows; if it's missing
-    # we fall back to stdlib timezone.utc which needs no external package and
-    # is accepted by datetime.now(tz=...) just as well.
-    try:
-        return ZoneInfo("UTC")
-    except Exception:
-        return timezone.utc  # type: ignore[return-value]
+    # Step 4 — absolute fallback
+    return ZoneInfo("UTC")
 
 
-# ── IP detection ──────────────────────────────────────────────────────────────
+# IP detection
 
 def _detect_from_ip() -> ZoneInfo | None:
     """
@@ -129,7 +123,7 @@ def _detect_from_ip() -> ZoneInfo | None:
         return None
 
 
-# ── System timezone fallback ──────────────────────────────────────────────────
+# System timezone fallback
 
 def _system_tz() -> ZoneInfo | None:
     """
@@ -149,6 +143,7 @@ def _system_tz() -> ZoneInfo | None:
             try:
                 return ZoneInfo(tz_name)
             except ZoneInfoNotFoundError:
+                # Not a valid IANA name — fall through to offset map
                 pass
 
         # Fallback: map UTC offset → a canonical IANA zone
@@ -178,10 +173,7 @@ def _system_tz() -> ZoneInfo | None:
         }
         iana = _OFFSET_MAP.get(offset_hours)
         if iana:
-            try:
-                return ZoneInfo(iana)
-            except Exception:
-                pass  # tzdata not installed — continue to fixed-offset fallback
+            return ZoneInfo(iana)
 
         # Build a fixed-offset zone as last resort
         fixed = timezone(offset)
@@ -193,6 +185,7 @@ def _system_tz() -> ZoneInfo | None:
             try:
                 return ZoneInfo(name)
             except ZoneInfoNotFoundError:
+                # Etc/GMT zone not available — return None for next fallback
                 pass
 
         return None
@@ -200,7 +193,7 @@ def _system_tz() -> ZoneInfo | None:
         return None
 
 
-# ── File cache ────────────────────────────────────────────────────────────────
+# File cache
 
 def _load_from_file() -> ZoneInfo | None:
     try:
@@ -222,7 +215,7 @@ def _save_to_file(tz_name: str):
         with open(_TZ_CACHE_FILE, "w") as f:
             f.write(tz_name)
     except Exception:
-        pass
+        return  # Cache write failure is non-critical
 
 
 def _delete_cache_file():
@@ -230,4 +223,4 @@ def _delete_cache_file():
         if os.path.exists(_TZ_CACHE_FILE):
             os.remove(_TZ_CACHE_FILE)
     except Exception:
-        pass
+        return  # Cache delete failure is non-critical
