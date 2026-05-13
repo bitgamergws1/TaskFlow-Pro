@@ -22,7 +22,7 @@ from rich import box
 
 from timezone_utils import get_tz, now_local, today_local, tz_label
 
-# ── Constants ─────────────────────────────────────────────────────────────────
+# Constants
 
 EXPIRY = date(2026, 5, 20)
 console = Console()
@@ -43,12 +43,12 @@ INTENT_ICONS = {
     "delete_task":   ("✗", "red",     "Deleting task"),
     "edit_task":     ("✎", "yellow",  "Editing task"),
     "analytics":     ("◈", "cyan",    "Showing analytics"),
-    "optimize":      ("⚡", "yellow", "Optimizing schedule"),
+    "optimize":      ("*", "yellow", "Optimizing schedule"),
     "chitchat":      ("◦", "dim",     ""),
     "unclear":       ("◦", "dim",     ""),
 }
 
-# ── Live "AI thinking" message pools per intent ───────────────────────────────
+# Live "AI thinking" message pools per intent
 _THINKING_MSGS = {
     "create_task": [
         "Parsing your task details...",
@@ -282,7 +282,7 @@ SLASH_HELP = """
 """
 
 
-# ── Guards ────────────────────────────────────────────────────────────────────
+# Guards
 
 def _check_expiry():
     if date.today() > EXPIRY:
@@ -299,7 +299,7 @@ def _get_ctrl():
     return TaskController()
 
 
-# ── Weather ───────────────────────────────────────────────────────────────────
+# Weather
 
 def _load_city():
     try:
@@ -352,7 +352,7 @@ def _get_weather_async():
     return _fetch_weather(city)
 
 
-# ── Render Helpers ────────────────────────────────────────────────────────────
+# Render Helpers
 
 def _print_banner():
     console.print(f"[bold cyan]{BANNER}[/bold cyan]")
@@ -402,7 +402,7 @@ def _task_table(tasks, title="Tasks"):
             due_display = f"{t.get('due_date','')} [dim]{t['due_time']}[/dim]"
         recur_icon = {"daily":"↺d","weekly":"↺w","weekdays":"↺wd","monthly":"↺m"}.get(t.get("recurrence","none"), "")
         name_display = f"{name_str} [dim]{recur_icon}[/dim]" if recur_icon else name_str
-        remind_str = "[cyan]🔔[/cyan]" if (t.get("reminder_at") and not t.get("reminder_sent")) else "[dim]--[/dim]"
+        remind_str = "[cyan]R[/cyan]" if (t.get("reminder_at") and not t.get("reminder_sent")) else "[dim]--[/dim]"
         table.add_row(
             t["id"],
             name_display,
@@ -451,7 +451,7 @@ def _render_task_card(t: dict, title="Task"):
     ))
 
 
-# ── Dashboard ─────────────────────────────────────────────────────────────────
+# Dashboard
 
 def _show_dashboard():
     ctrl = _get_ctrl()
@@ -471,7 +471,7 @@ def _show_dashboard():
     tasks = ctrl.list_tasks()
 
     pc     = "green" if stats["productivity"] >= 70 else "yellow" if stats["productivity"] >= 40 else "red"
-    streak = f"  {stats['streak']}d 🔥" if stats["streak"] >= 3 else f"  {stats['streak']}d"
+    streak = f"  {stats['streak']}d" if stats["streak"] >= 3 else f"  {stats['streak']}d"
     stat_panels = [
         Panel(f"[bold white]{stats['total']}[/bold white]\n[dim]Total[/dim]",                     border_style="dim", expand=True),
         Panel(f"[bold green]{stats['completed']}[/bold green]\n[dim]Done[/dim]",                  border_style="dim", expand=True),
@@ -509,16 +509,16 @@ def _show_dashboard():
 
     console.print()
     TIPS = [
-        "💡  Break big tasks into 25-min Pomodoro blocks — use [white]taskflow focus <ID>[/white]",
-        "🎯  High priority tasks first, always. Your brain is freshest in the morning.",
-        "📋  Name tasks as actions: 'Write report' beats 'Report' every time.",
-        "🔥  A 3-day streak beats a perfect week you never started.",
-        "⚡  If it takes < 2 minutes, do it now — don't add it to the list.",
-        "📅  Set due dates even for flexible tasks — deadlines create focus.",
-        "🗂️  Group similar tasks by category — context-switching kills momentum.",
-        "✅  Complete your hardest task before lunch. Everything else feels easy after.",
-        "🧠  Pending tasks drain mental energy even when you're not working on them.",
-        "📊  Check [white]taskflow analytics[/white] weekly — what gets measured gets done.",
+        "Break big tasks into 25-min Pomodoro blocks — use [white]taskflow focus <ID>[/white]",
+        "High priority tasks first, always. Your brain is freshest in the morning.",
+        "Name tasks as actions: 'Write report' beats 'Report' every time.",
+        "A 3-day streak beats a perfect week you never started.",
+        "If it takes < 2 minutes, do it now — don't add it to the list.",
+        "Set due dates even for flexible tasks — deadlines create focus.",
+        "Group similar tasks by category — context-switching kills momentum.",
+        "Complete your hardest task before lunch. Everything else feels easy after.",
+        "Pending tasks drain mental energy even when you're not working on them.",
+        "Check [white]taskflow analytics[/white] weekly — what gets measured gets done.",
     ]
 
     import itertools
@@ -569,7 +569,7 @@ def _show_dashboard():
     )
 
 
-# ── CLI Group ─────────────────────────────────────────────────────────────────
+# CLI Group
 
 @click.group(invoke_without_command=True, context_settings={"help_option_names": ["-h", "--help"]})
 @click.pass_context
@@ -580,7 +580,7 @@ def cli(ctx):
         _show_dashboard()
 
 
-# ── add ───────────────────────────────────────────────────────────────────────
+# add
 
 @cli.command()
 @click.option("--ai", "use_ai", is_flag=True, help="Parse task from natural language")
@@ -631,7 +631,7 @@ def add(use_ai):
         due_time = Prompt.ask("[white]Due time (HH:MM, optional)[/white]", default="")
         notes    = Prompt.ask("[white]Notes[/white]", default="")
 
-        # ── Validate date/time FIRST (before reminder prompt) ─────────────────
+        # Validate date/time FIRST (before reminder prompt)
         due_date = due_date.strip() or None
         due_time = due_time.strip() or None
         notes    = notes.strip() or None
@@ -655,7 +655,7 @@ def add(use_ai):
                 console.print("[red]Invalid time. Use HH:MM (e.g. 08:30).[/red]")
                 return
 
-        # ── Reminder (only offered when due datetime is in the future) ────────
+        # Reminder (only offered when due datetime is in the future)
         reminder_at = None
         _now = now_local()
 
@@ -716,7 +716,7 @@ def add(use_ai):
         else:
             console.print("  [dim]Reminder skipped — due date/time is already in the past.[/dim]")
 
-        # ── Recurrence ────────────────────────────────────────────────────────
+        # Recurrence
         recurrence = "none"
         if Confirm.ask("  Does this task repeat?", default=False):
             recurrence = Prompt.ask(
@@ -747,7 +747,7 @@ def add(use_ai):
         )
 
 
-# ── list ──────────────────────────────────────────────────────────────────────
+# list
 
 @cli.command(name="list")
 @click.option("--status",   "-s", default=None, type=click.Choice(["pending", "completed"]))
@@ -770,7 +770,7 @@ def list_tasks(status, category, priority):
     console.print(f"  [dim]{len(tasks)} task(s)[/dim]")
 
 
-# ── complete ──────────────────────────────────────────────────────────────────
+# complete
 
 @cli.command()
 @click.argument("task_id", required=False)
@@ -802,7 +802,7 @@ def complete(task_id):
         console.print(f"  [dim]Tip: run [white]taskflow list[/white] to see valid IDs.[/dim]")
 
 
-# ── delete ────────────────────────────────────────────────────────────────────
+# delete
 
 @cli.command()
 @click.argument("task_id", required=False)
@@ -836,7 +836,7 @@ def delete(task_id):
         console.print(f"  [red]Error:[/red] {err}")
 
 
-# ── restore ───────────────────────────────────────────────────────────────────
+# restore
 
 @cli.command()
 @click.argument("task_id", required=False)
@@ -864,7 +864,7 @@ def restore(task_id):
         console.print(f"  [dim]Run [white]taskflow bin[/white] to see what's in the recycle bin.[/dim]")
 
 
-# ── bin ───────────────────────────────────────────────────────────────────────
+# bin
 
 @cli.command(name="bin")
 def recycle_bin():
@@ -878,7 +878,7 @@ def recycle_bin():
     console.print("  [dim]Use [white]taskflow restore <ID>[/white] to recover.[/dim]")
 
 
-# ── edit ──────────────────────────────────────────────────────────────────────
+# edit
 
 @cli.command()
 @click.argument("task_id")
@@ -953,7 +953,7 @@ def edit(task_id):
         except ValueError:
             console.print("  [red]Invalid time format — skipped. Use HH:MM (e.g. 14:30).[/red]")
 
-    # ── Reminder validation ────────────────────────────────────────────────────
+    # Reminder validation
     if remind_in:
         _now = now_local()
         try:
@@ -996,7 +996,7 @@ def edit(task_id):
         console.print(f"  [red]Error:[/red] {err}")
 
 
-# ── search ────────────────────────────────────────────────────────────────────
+# search
 
 @cli.command()
 @click.argument("query", required=False)
@@ -1017,7 +1017,7 @@ def search(query):
     console.print(f"  [dim]{len(tasks)} result(s)[/dim]")
 
 
-# ── weather ───────────────────────────────────────────────────────────────────
+# weather
 
 @cli.command()
 @click.argument("city", required=False)
@@ -1050,7 +1050,7 @@ def weather(city):
     ))
 
 
-# ── Reminder Daemon ──────────────────────────────────────────────────────────
+# Reminder Daemon
 
 def _reminder_daemon(ctrl, console_ref):
     """
@@ -1070,18 +1070,19 @@ def _reminder_daemon(ctrl, console_ref):
                         due_part += f" {task['due_time']}"
                     due_part += "[/dim]"
                 console_ref.print(
-                    f"\n  [bold cyan]🔔 REMINDER:[/bold cyan] "
+                    f"\n  [bold cyan]REMINDER:[/bold cyan] "
                     f"[bold white]{task['name']}[/bold white]"
                     + due_part
                     + f"  [dim]({task['category']} · {task['priority']})[/dim]"
                 )
                 ctrl.mark_reminder_sent(task["id"])
         except Exception:
+            # daemon must not crash the main process
             pass
         _time.sleep(30)
 
 
-# ── chat ──────────────────────────────────────────────────────────────────────
+# chat
 
 @cli.command()
 def chat():
@@ -1089,7 +1090,7 @@ def chat():
     ctrl    = _get_ctrl()
     history = []
     draft   = {}
- # ── Detect location once for weather queries ──────────────────────────
+ # Detect location once for weather queries
     _user_location = _load_city() or _detect_city_from_ip()
     # Start reminder daemon — checks every 30s for due reminders
     import threading as _rt
@@ -1205,7 +1206,7 @@ def chat():
 
         return True
 
-    # ── Main chat loop ─────────────────────────────────────────────────────
+    # Main chat loop
     while True:
         try:
             user_input = Prompt.ask("[bold white]You[/bold white]").strip()
@@ -1216,7 +1217,7 @@ def chat():
         if not user_input:
             continue
 
-        # ── Slash command? ─────────────────────────────────────────────────
+        # Slash command?
         if user_input.startswith("/"):
             result = _handle_slash(user_input[1:])
             if result is None:
@@ -1224,7 +1225,7 @@ def chat():
             continue
 
         # ══════════════════════════════════════════════════════════════════
-        # ── Step 0: Prompt Enhancement (resolve pronouns/shortcuts) ──────
+        # Step 0: Prompt Enhancement (resolve pronouns/shortcuts)
         # ══════════════════════════════════════════════════════════════════
         enhanced_input = user_input
         if history or draft:
@@ -1234,7 +1235,7 @@ def chat():
                 console.print(f"  [dim]→ {enhanced_input}[/dim]")
 
         # ══════════════════════════════════════════════════════════════════
-        # ── Step 1: Multi-Agent Decomposition ────────────────────────────
+        # Step 1: Multi-Agent Decomposition
         # Splits complex prompts into ordered sub-tasks.
         # Single intent → 1 item; compound prompt → 2+ items.
         # ══════════════════════════════════════════════════════════════════
@@ -1243,11 +1244,11 @@ def chat():
 
         if len(sub_tasks) > 1:
             console.print(
-                f"  [dim cyan]⚡ {len(sub_tasks)} tasks detected — processing in order[/dim cyan]"
+                f"  [dim cyan]{len(sub_tasks)} tasks detected — processing in order[/dim cyan]"
             )
 
         # ══════════════════════════════════════════════════════════════════
-        # ── Step 2–4: Process each sub-task ──────────────────────────────
+        # Step 2–4: Process each sub-task
         # ══════════════════════════════════════════════════════════════════
         for task_idx, sub in enumerate(sub_tasks):
             sub_msg    = sub["sub_message"]
@@ -1257,7 +1258,7 @@ def chat():
             if len(sub_tasks) > 1:
                 console.print(f"\n  [dim]── [{task_idx + 1}/{len(sub_tasks)}][/dim] [white]{sub_msg}[/white]")
 
-            # ── Intent Classification ─────────────────────────────────────
+            # Intent Classification
             with console.status("[dim]Classifying intent...[/dim]", spinner="dots"):
                 intent_info = ctrl.classify_intent(sub_msg, history=history)
 
@@ -1270,7 +1271,7 @@ def chat():
             if intent_name not in ("chitchat", "unclear") and display:
                 console.print(f"  [dim]{icon}[/dim] [dim]Detected:[/dim] [{color}]{display}[/{color}]")
 
-            # ── Main AI call — live animated thinking display ─────────────
+            # Main AI call — live animated thinking display
             def _do_chat(_sub_msg=sub_msg, _intent_info=intent_info):
                 return ctrl.chat(
                     _sub_msg,
@@ -1304,7 +1305,7 @@ def chat():
                 ))
 
             if not action:
-                # ── Intent-based action fallbacks ─────────────────────────
+                # Intent-based action fallbacks
                 # AI gave a text reply but forgot to emit TASKFLOW_ACTION.
                 # Synthesize the correct action based on detected intent.
 
@@ -1360,7 +1361,7 @@ def chat():
                 console.print()
                 continue
 
-            # ── Action validation ─────────────────────────────────────────
+            # Action validation
             action_name = action.get("action") if action else None
             is_match, _ = ctrl.validate_action(intent_name, action_name)
             if not is_match:
@@ -1369,7 +1370,7 @@ def chat():
                     f" but AI triggered [white]{action_name}[/white][/dim yellow]"
                 )
 
-            # ── Dispatch action ───────────────────────────────────────────
+            # Dispatch action
             result_type, result_data, action_err, draft = ctrl.handle_chat_action(
                 action, current_draft=draft
             )
@@ -1378,7 +1379,7 @@ def chat():
                 console.print(f"  [red]{action_err}[/red]\n")
                 continue
 
-            # ── Render result ─────────────────────────────────────────────
+            # Render result
             if result_type == "draft_updated":
                 if draft:
                     collected = "  ".join(
@@ -1428,7 +1429,7 @@ def chat():
             elif result_type == "reminder_set":
                 t = result_data
                 remind_time = t.get("reminder_at", "")
-                console.print(f"  [cyan]🔔[/cyan] Reminder set for [white]{t['name']}[/white] at [cyan]{remind_time}[/cyan]\n")
+                console.print(f"  [cyan]Reminder set:[/cyan] [white]{t['name']}[/white] at [cyan]{remind_time}[/cyan]\n")
 
             elif result_type == "analytics":
                 s  = result_data
@@ -1452,11 +1453,9 @@ def chat():
 
             elif result_type == "draft_cleared":
                 console.print("  [dim]Draft cleared.[/dim]\n")
-            elif result_type == "passthrough":
-                pass
 
 
-# ── optimize ──────────────────────────────────────────────────────────────────
+# optimize
 
 @cli.command()
 def optimize():
@@ -1482,7 +1481,7 @@ def optimize():
     ))
 
 
-# ── focus ─────────────────────────────────────────────────────────────────────
+# focus
 
 @cli.command()
 @click.argument("task_id")
@@ -1544,7 +1543,7 @@ def focus(task_id, minutes):
         console.print(f"\n  [dim]Stopped after ~{elapsed_m} min.[/dim]")
 
 
-# ── analytics ─────────────────────────────────────────────────────────────────
+# analytics
 
 @cli.command()
 def analytics():
@@ -1572,7 +1571,7 @@ def analytics():
     console.print()
 
 
-# ── export ────────────────────────────────────────────────────────────────────
+# export
 
 @cli.command()
 def export():
@@ -1585,7 +1584,7 @@ def export():
     ))
 
 
-# ── Entry ─────────────────────────────────────────────────────────────────────
+# Entry
 
 if __name__ == "__main__":
     cli()
