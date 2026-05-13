@@ -699,9 +699,9 @@ class AIGateway:
         text = re.sub(r'\n{3,}', '\n\n', text)   # collapse excessive blank lines
         return text.strip()
 
-    # ── ✅ NEW: Rule-based fast validator ─────────────────────────────────────
+    # ──  Rule-based fast validator ─────────────────────────────────────
 
-    def _fast_validate(self, text: str) -> tuple[bool, str]:
+    def _fast_validate(self, text: str, intent: str = "") -> tuple[bool, str]:
         """
         Quick heuristic checks before spending tokens on the judge.
         NOTE: receives already-stripped text (no ACTION_TAG, no leaked JSON).
@@ -715,12 +715,12 @@ class AIGateway:
         # Strip leading markdown formatting before checking start character
         # (DEEPSHI sometimes returns **bold**, # heading, or `inline code` — all fine)
         # ← backtick added: model wraps analytics/stats replies in `...` code spans
-        t_check = re.sub(r'^[\*_#`]+\s*', '', t)
+        t_check = re.sub(r'^[\*_#`|]+\s*', '', t)
 
-        # Starts with TRULY garbage chars: JSON fragments, brackets, pipes, slashes
-        # Note: !, ?, ., #, *, ` removed from this set — they appear in valid responses
-        if re.match(r'^[,\{\}\[\]<>|\\\/^&~]+', t_check or t):
-            return False, "Response starts with punctuation/symbols"
+        # Skip start-char check for intents where varied formatting is expected
+        if intent not in ("weather", "general_question"):
+            if re.match(r'^[,\{\}\[\]<>\\\/^&~]+', t_check or t):
+                return False, "Response starts with punctuation/symbols"
 
         # Ends abruptly mid-word or with open bracket
         if re.search(r'[\{\[\(]\s*$', t):
@@ -790,7 +790,7 @@ class AIGateway:
 
     # Intents where the reply is intentionally short (chart/table renders separately).
     # Skip the AI judge for these — it always rates short replies poorly.
-    _JUDGE_SKIP_INTENTS = {"analytics", "list_tasks", "search_tasks", "complete_task", "delete_task"}
+    _JUDGE_SKIP_INTENTS = {"analytics", "list_tasks", "search_tasks", "complete_task", "delete_task", "weather", "general_question"}
 
     def _validate_response(self, user_msg: str, raw_reply: str, intent: str = "") -> tuple[bool, str]:
         # Pass 1: strip action tag
@@ -806,7 +806,7 @@ class AIGateway:
         reply_clean = self._strip_thinking(reply_clean)
 
         # Stage 1 — fast rules
-        fast_ok, fast_reason = self._fast_validate(reply_clean)
+        fast_ok, fast_reason = self._fast_validate(reply_clean, intent=intent)
         if not fast_ok:
             return False, f"[fast-check] {fast_reason}"
 
@@ -860,10 +860,18 @@ Use this intent rulebook to understand what the user is trying to do:
 Your job: rewrite the user's LATEST MESSAGE to be fully self-contained and unambiguous,
 so the intent classifier and main AI are not confused by pronouns or follow-up shortcuts.
 
+⚠ ABSOLUTE RULE #0 — LANGUAGE LOCK (non-negotiable, checked before everything else):
+Detect the script/language of the user's LATEST MESSAGE only (not history).
+- If the latest message is in English or Roman script → output MUST be English/Roman only
+- If the latest message is in Hindi/Devanagari → output MUST be Hindi/Devanagari only
+- If the latest message is Hinglish (Roman Hindi) → output MUST be Hinglish (Roman Hindi) only
+- One-word inputs (like "shimla", "haan", "ok") → match the language of the PREVIOUS user turn
+NEVER introduce Hindi words into an English rewrite. NEVER introduce English into a pure Hindi rewrite.
+NEVER translate. If you are unsure, return the original message UNCHANGED.
+
 STRICT RULES:
-1. LANGUAGE — reply in the EXACT SAME language/style as the user's original message.
-   Hindi → Hindi, Hinglish → Hinglish, English → English, Punjabi → Punjabi.
-   NEVER add a language that wasn't in the original. NEVER translate.
+1. LANGUAGE — see ABSOLUTE RULE #0 above. This is the most important rule.
+   English → English | Hindi → Hindi | Hinglish → Hinglish | other → match it exactly.
 
 2. PRONOUN RESOLUTION — replace vague references with actuals from history:
    "us task" / "isko" / "woh" / "wahi wala" / "it" / "that" → actual task name or ID
