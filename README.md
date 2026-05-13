@@ -623,4 +623,4 @@ taskflow export                        # 11. Export report
 ---
 
 > Built for **DevNest Python Developer Internship — Week 1**
-> Proxy server managed by DevNest — already deployed and running.
+> Proxy server managed by Scam Buster India — already deployed and running.
