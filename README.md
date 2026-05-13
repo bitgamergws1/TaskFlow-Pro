@@ -289,7 +289,7 @@ Step 5 — Action Dispatch       Execute the action (save task, mark done, etc.)
 5. All 4 mandatory fields ready (name, priority, due_date, category) → AI shows a **preview card**, asks you to confirm before saving
 6. You confirm → task saved, draft cleared
 
-**Reminder daemon in chat:** While `taskflow chat` is running, a background thread checks every 30 seconds for due reminders. When a reminder fires, a bold 🔔 notification prints directly in your terminal — no external notification system needed.
+**Reminder daemon in chat:** While `taskflow chat` is running, a background thread checks every 30 seconds for due reminders. When a reminder fires, a bold  notification prints directly in your terminal — no external notification system needed.
 
 ### AI-Powered Commands
 
