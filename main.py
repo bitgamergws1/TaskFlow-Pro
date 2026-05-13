@@ -20,6 +20,8 @@ from rich.live import Live
 from rich.columns import Columns
 from rich import box
 
+from timezone_utils import get_tz, now_local, today_local, tz_label
+
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 EXPIRY = date(2026, 5, 20)
@@ -48,27 +50,163 @@ INTENT_ICONS = {
 
 # ── Live "AI thinking" message pools per intent ───────────────────────────────
 _THINKING_MSGS = {
-    "create_task":   ["Parsing your task details...", "Setting up task fields...", "Almost ready to save..."],
-    "complete_task": ["Finding that task...", "Marking as done...", "Updating your progress..."],
-    "delete_task":   ["Locating the task...", "Preparing to remove...", "Cleaning up your list..."],
-    "edit_task":     ["Reading task details...", "Applying your changes...", "Saving updates..."],
-    "list_tasks":    ["Fetching your tasks...", "Sorting by priority...", "Loading your list..."],
-    "search_tasks":  ["Scanning your tasks...", "Looking for matches...", "Almost there..."],
-    "analytics":     ["Crunching your numbers...", "Calculating productivity...", "Building your stats..."],
-    "optimize":      ["Analysing pending tasks...", "Building your schedule...", "Optimising time blocks..."],
-    "weather":       ["Checking current conditions...", "Fetching weather data...", "Almost ready..."],
-    "general_question": ["Thinking about that...", "Searching my knowledge...", "Putting together an answer..."],
-    "chitchat":      ["Thinking...", "One moment...", "On it..."],
-    "unclear":       ["Understanding your request...", "Working on it...", "Almost there..."],
+    "create_task": [
+        "Parsing your task details...",
+        "Extracting name and priority...",
+        "Checking for a due date...",
+        "Picking the right category...",
+        "Filling in any missing fields...",
+        "Cross-referencing with your draft...",
+        "Validating task structure...",
+        "Almost ready to preview...",
+        "Putting finishing touches...",
+        "One second more...",
+    ],
+    "complete_task": [
+        "Finding that task...",
+        "Matching task to your list...",
+        "Confirming it's still pending...",
+        "Marking as done...",
+        "Updating completion timestamp...",
+        "Recalculating your streak...",
+        "Saving to database...",
+        "Syncing progress...",
+        "Updating your stats...",
+        "Almost done...",
+    ],
+    "delete_task": [
+        "Locating the task...",
+        "Verifying task exists...",
+        "Moving to recycle bin...",
+        "Cleaning up your list...",
+        "Updating your task count...",
+        "Saving changes...",
+        "Almost there...",
+        "Wrapping up...",
+        "Syncing deletion...",
+        "Done in a sec...",
+    ],
+    "edit_task": [
+        "Reading current task details...",
+        "Parsing your changes...",
+        "Validating field updates...",
+        "Applying priority changes...",
+        "Updating due date...",
+        "Saving updates...",
+        "Confirming edit...",
+        "Syncing to database...",
+        "Almost there...",
+        "Finishing up...",
+    ],
+    "list_tasks": [
+        "Fetching your tasks...",
+        "Sorting by priority...",
+        "Applying filters...",
+        "Checking due dates...",
+        "Flagging overdue items...",
+        "Ordering by urgency...",
+        "Loading your list...",
+        "Almost ready...",
+        "Rendering table...",
+        "Here it comes...",
+    ],
+    "search_tasks": [
+        "Scanning your tasks...",
+        "Running keyword match...",
+        "Checking names and notes...",
+        "Fuzzy-matching your query...",
+        "Filtering results...",
+        "Ranking by relevance...",
+        "Almost there...",
+        "Compiling matches...",
+        "Sorting results...",
+        "Done in a sec...",
+    ],
+    "analytics": [
+        "Crunching your numbers...",
+        "Counting completed tasks...",
+        "Calculating productivity rate...",
+        "Computing your streak...",
+        "Grouping by category...",
+        "Analyzing priority distribution...",
+        "Building your stats...",
+        "Checking overdue count...",
+        "Generating charts...",
+        "Almost ready...",
+    ],
+    "optimize": [
+        "Analyzing pending tasks...",
+        "Ranking by priority and deadline...",
+        "Grouping by category...",
+        "Calculating Pomodoro blocks...",
+        "Inserting break intervals...",
+        "Balancing your energy curve...",
+        "Building time blocks...",
+        "Optimizing the schedule...",
+        "Finalizing your day plan...",
+        "Almost done...",
+    ],
+    "weather": [
+        "Detecting your location...",
+        "Connecting to weather API...",
+        "Fetching current conditions...",
+        "Reading temperature data...",
+        "Checking humidity levels...",
+        "Looking up forecast...",
+        "Almost ready...",
+        "Packaging weather info...",
+        "One more second...",
+        "Here it comes...",
+    ],
+    "general_question": [
+        "Thinking about that...",
+        "Pulling from knowledge base...",
+        "Formulating an answer...",
+        "Checking facts...",
+        "Searching my knowledge...",
+        "Putting together a response...",
+        "Almost there...",
+        "Refining the answer...",
+        "One moment more...",
+        "Finishing up...",
+    ],
+    "chitchat": [
+        "Thinking...",
+        "One moment...",
+        "On it...",
+        "Processing...",
+        "Almost there...",
+        "Cooking up a reply...",
+        "Hang tight...",
+        "Nearly done...",
+        "Just a sec...",
+        "Coming right up...",
+    ],
+    "unclear": [
+        "Understanding your request...",
+        "Working on it...",
+        "Parsing the context...",
+        "Matching to a known intent...",
+        "Cross-checking history...",
+        "Almost have it...",
+        "Interpreting your message...",
+        "Figuring out what you need...",
+        "Nearly there...",
+        "One more second...",
+    ],
 }
-_THINKING_GENERIC = ["AI is thinking...", "Processing your request...", "Hold on a moment...",
-                     "Working with your tasks...", "Crafting a response..."]
+_THINKING_GENERIC = [
+    "AI is thinking...", "Processing your request...", "Hold on a moment...",
+    "Working with your tasks...", "Crafting a response...", "Reading context...",
+    "Checking task state...", "Running inference...", "Almost ready...", "One more second...",
+]
 
 
 def _live_thinking_call(fn, intent_name: str = "unclear"):
     """
     Runs `fn()` in a background thread while showing animated cycling
     intent-aware messages in the foreground using Rich Live.
+    Shows elapsed time so users know the AI is actively working.
     Returns whatever fn() returns.
     """
     msgs   = _THINKING_MSGS.get(intent_name, _THINKING_GENERIC)
@@ -87,18 +225,22 @@ def _live_thinking_call(fn, intent_name: str = "unclear"):
     idx      = 0
     spinners = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
     spin_i   = 0
+    start_ts = time.time()
 
-    with Live(console=console, refresh_per_second=4, transient=True) as live:
+    with Live(console=console, refresh_per_second=8, transient=True) as live:
         while t.is_alive():
-            msg    = msgs[idx % len(msgs)]
-            spin   = spinners[spin_i % len(spinners)]
+            elapsed = int(time.time() - start_ts)
+            msg     = msgs[idx % len(msgs)]
+            spin    = spinners[spin_i % len(spinners)]
+            # Show elapsed after 3s so it's not distracting on fast replies
+            timer_str = f"  [dim]{elapsed}s[/dim]" if elapsed >= 3 else ""
             live.update(Panel(
-                f"  [dim]{spin}[/dim]  [white]{msg}[/white]",
+                f"  [dim]{spin}[/dim]  [white]{msg}[/white]{timer_str}",
                 title="[dim]AI[/dim]", border_style="dim", padding=(0, 1)
             ))
-            time.sleep(0.25)
+            time.sleep(0.125)          # 8 fps — smooth spinner
             spin_i += 1
-            if spin_i % 12 == 0:   # advance message every ~3s
+            if spin_i % 12 == 0:       # advance message every ~1.5s (was 3s)
                 idx += 1
 
     t.join()
@@ -214,7 +356,7 @@ def _get_weather_async():
 
 def _print_banner():
     console.print(f"[bold cyan]{BANNER}[/bold cyan]")
-    console.print(f"  [dim]{date.today().strftime('%A, %d %B %Y')}  |  DevNest Internship  |  Week 1[/dim]\n")
+    console.print(f"  [dim]{today_local().strftime('%A, %d %B %Y')}  |  {tz_label()}  |  DevNest Week 1[/dim]\n")
 
 
 def _task_table(tasks, title="Tasks"):
@@ -229,13 +371,14 @@ def _task_table(tasks, title="Tasks"):
         title_style="bold white",
     )
     table.add_column("ID",       style="dim",    width=10)
-    table.add_column("Task",     style="white",  min_width=24)
-    table.add_column("Category", style="dim",    width=12)
+    table.add_column("Task",     style="white",  min_width=22)
+    table.add_column("Category", style="dim",    width=10)
     table.add_column("Priority", justify="center", width=9)
-    table.add_column("Due",      justify="center", width=13)
+    table.add_column("Due / Time", justify="center", width=16)
+    table.add_column("Remind",   justify="center", width=6)
     table.add_column("Status",   justify="center", width=12)
 
-    today = date.today()
+    today = today_local()
     for t in tasks:
         p_style = PRIORITY_STYLE.get(t["priority"], "white")
         s_icon  = STATUS_ICON.get(t["status"], "?")
@@ -254,12 +397,19 @@ def _task_table(tasks, title="Tasks"):
             f"[red]{t['name']}[/red]" if overdue else t["name"]
         )
 
+        due_display = due_str if overdue else (t.get("due_date") or "[dim]--[/dim]")
+        if t.get("due_time") and not overdue:
+            due_display = f"{t.get('due_date','')} [dim]{t['due_time']}[/dim]"
+        recur_icon = {"daily":"↺d","weekly":"↺w","weekdays":"↺wd","monthly":"↺m"}.get(t.get("recurrence","none"), "")
+        name_display = f"{name_str} [dim]{recur_icon}[/dim]" if recur_icon else name_str
+        remind_str = "[cyan]🔔[/cyan]" if (t.get("reminder_at") and not t.get("reminder_sent")) else "[dim]--[/dim]"
         table.add_row(
             t["id"],
-            name_str,
+            name_display,
             t.get("category", "General"),
             f"[{p_style}]{t['priority']}[/{p_style}]",
-            due_str if overdue else (t.get("due_date") or "[dim]--[/dim]"),
+            due_display,
+            remind_str,
             f"[dim]{s_icon} {t['status'].capitalize()}[/dim]",
         )
     return table
@@ -278,13 +428,23 @@ def _bar_chart(data: dict, title: str, width: int = 28):
 
 def _render_task_card(t: dict, title="Task"):
     p_style = PRIORITY_STYLE.get(t.get("priority", "Medium"), "white")
+    due_line = t.get('due_date') or '--'
+    if t.get('due_time'):
+        due_line += f"  {t['due_time']}"
+    recur = t.get('recurrence', 'none')
+    recur_line = recur if recur and recur != 'none' else '--'
+    remind_line = t.get('reminder_at') or '--'
+    if t.get('reminder_sent'):
+        remind_line += '  [dim](sent)[/dim]'
     console.print(Panel(
-        f"  [dim]ID[/dim]       [white]{t.get('id', '— not saved yet —')}[/white]\n"
-        f"  [dim]Name[/dim]     [bold white]{t['name']}[/bold white]\n"
-        f"  [dim]Priority[/dim] [{p_style}]{t.get('priority','Medium')}[/{p_style}]\n"
-        f"  [dim]Category[/dim] [white]{t.get('category','General')}[/white]\n"
-        f"  [dim]Due[/dim]      [white]{t.get('due_date') or '--'}[/white]\n"
-        f"  [dim]Notes[/dim]    [dim]{t.get('notes') or '--'}[/dim]",
+        f"  [dim]ID[/dim]        [white]{t.get('id', '— not saved yet —')}[/white]\n"
+        f"  [dim]Name[/dim]      [bold white]{t['name']}[/bold white]\n"
+        f"  [dim]Priority[/dim]  [{p_style}]{t.get('priority','Medium')}[/{p_style}]\n"
+        f"  [dim]Category[/dim]  [white]{t.get('category','General')}[/white]\n"
+        f"  [dim]Due[/dim]       [white]{due_line}[/white]\n"
+        f"  [dim]Recurrence[/dim][white]{recur_line}[/white]\n"
+        f"  [dim]Reminder[/dim]  [cyan]{remind_line}[/cyan]\n"
+        f"  [dim]Notes[/dim]     [dim]{t.get('notes') or '--'}[/dim]",
         title=f"[bold white]{title}[/bold white]",
         border_style="dim",
         padding=(0, 2),
@@ -442,25 +602,147 @@ def add(use_ai):
             return
 
     if not use_ai:
-        name     = Prompt.ask("[white]Task name[/white]")
-        category = Prompt.ask("[white]Category[/white]", choices=VALID_CATEGORIES, default="General")
-        priority = Prompt.ask("[white]Priority[/white]", choices=VALID_PRIORITIES, default="Medium")
+        name = Prompt.ask("[white]Task name[/white]")
+
+        # Case-insensitive category prompt
+        _cat_map = {c.lower(): c for c in VALID_CATEGORIES}
+        while True:
+            _cat_raw = Prompt.ask(
+                f"[white]Category[/white] [dim][{'/'.join(VALID_CATEGORIES)}][/dim]",
+                default="General",
+            ).strip()
+            category = _cat_map.get(_cat_raw.lower())
+            if category:
+                break
+            console.print(f"  [red]Invalid.[/red] Choose: {', '.join(VALID_CATEGORIES)}")
+
+        # Case-insensitive priority prompt
+        _pri_map = {p.lower(): p for p in VALID_PRIORITIES}
+        while True:
+            _pri_raw = Prompt.ask(
+                f"[white]Priority[/white] [dim][{'/'.join(VALID_PRIORITIES)}][/dim]",
+                default="Medium",
+            ).strip()
+            priority = _pri_map.get(_pri_raw.lower())
+            if priority:
+                break
+            console.print(f"  [red]Invalid.[/red] Choose: {', '.join(VALID_PRIORITIES)}")
         due_date = Prompt.ask("[white]Due date (YYYY-MM-DD)[/white]", default="")
+        due_time = Prompt.ask("[white]Due time (HH:MM, optional)[/white]", default="")
         notes    = Prompt.ask("[white]Notes[/white]", default="")
 
+        # ── Validate date/time FIRST (before reminder prompt) ─────────────────
         due_date = due_date.strip() or None
+        due_time = due_time.strip() or None
         notes    = notes.strip() or None
+
         if due_date:
             try:
-                date.fromisoformat(due_date)
+                parsed_due = date.fromisoformat(due_date)
+                if parsed_due < today_local():
+                    console.print(f"  [yellow]⚠ '{due_date}' is in the past.[/yellow]")
+                    if not Confirm.ask("  Save anyway?", default=False):
+                        console.print("  [dim]Task not saved. Fix the date and try again.[/dim]")
+                        return
             except ValueError:
                 console.print("[red]Invalid date. Use YYYY-MM-DD.[/red]")
                 return
 
-        task_id, _ = ctrl.add_manual(name, category, priority, due_date, notes)
+        if due_time:
+            try:
+                datetime.strptime(due_time, "%H:%M")
+            except ValueError:
+                console.print("[red]Invalid time. Use HH:MM (e.g. 08:30).[/red]")
+                return
+
+        # ── Reminder (only offered when due datetime is in the future) ────────
+        reminder_at = None
+        _now = now_local()
+
+        # Build a full due datetime for comparison
+        _due_dt = None
+        if due_date:
+            try:
+                _d = date.fromisoformat(due_date)
+                _t = datetime.strptime(due_time, "%H:%M").time() if due_time else None
+                _due_dt = datetime.combine(_d, _t, tzinfo=get_tz()) if _t else datetime(_d.year, _d.month, _d.day, 23, 59, tzinfo=get_tz())
+            except (ValueError, TypeError):
+                pass
+
+        _due_is_future = (_due_dt is not None and _due_dt > _now)
+        _no_due        = (due_date is None)
+
+        if _due_is_future or _no_due:
+            if Confirm.ask("  Set a reminder?", default=False):
+                # Smart suggestion: 30 min before due, or tomorrow 09:00 if no due date
+                if _due_is_future:
+                    from datetime import timedelta as _td
+                    _suggest_dt = _due_dt - _td(minutes=30)
+                    if _suggest_dt <= _now:
+                        _suggest_dt = _due_dt
+                    suggestion = _suggest_dt.strftime("%Y-%m-%d %H:%M")
+                else:
+                    from datetime import timedelta as _td
+                    suggestion = (now_local().replace(hour=9, minute=0, second=0, microsecond=0) + _td(days=1)).strftime("%Y-%m-%d %H:%M")
+
+                while True:
+                    r_input = Prompt.ask(
+                        "[white]Remind at (YYYY-MM-DD HH:MM)[/white]",
+                        default=suggestion,
+                    ).strip()
+                    if not r_input:
+                        console.print("  [dim]Reminder skipped.[/dim]")
+                        break
+                    try:
+                        r_dt = datetime.strptime(r_input, "%Y-%m-%d %H:%M").replace(tzinfo=get_tz())
+                        if r_dt <= _now:
+                            console.print(
+                                f"  [red]✗ '{r_input}' is already in the past — reminder won't fire.[/red]"
+                            )
+                            if not Confirm.ask("  Enter a different time?", default=True):
+                                console.print("  [dim]Reminder skipped.[/dim]")
+                                break
+                            continue
+                        if _due_is_future and r_dt > _due_dt:
+                            console.print(
+                                f"  [yellow]⚠ Reminder is set AFTER the due time.[/yellow]"
+                            )
+                            if not Confirm.ask("  Keep this reminder time?", default=False):
+                                continue
+                        reminder_at = r_input
+                        break
+                    except ValueError:
+                        console.print("  [red]Invalid format. Use YYYY-MM-DD HH:MM (e.g. 2026-05-20 09:00)[/red]")
+        else:
+            console.print("  [dim]Reminder skipped — due date/time is already in the past.[/dim]")
+
+        # ── Recurrence ────────────────────────────────────────────────────────
+        recurrence = "none"
+        if Confirm.ask("  Does this task repeat?", default=False):
+            recurrence = Prompt.ask(
+                "[white]Recurrence[/white]",
+                choices=["daily", "weekly", "weekdays", "monthly"],
+                default="daily",
+            )
+            recurrence_end = Prompt.ask(
+                "[white]Repeat until (YYYY-MM-DD, optional)[/white]", default=""
+            ).strip() or None
+        else:
+            recurrence_end = None
+
+        task_id, _ = ctrl.add_manual(
+            name, category, priority, due_date, notes,
+            due_time=due_time, reminder_at=reminder_at,
+            recurrence=recurrence, recurrence_end_date=recurrence_end,
+        )
         _render_task_card(
-            {"id": task_id, "name": name, "priority": priority,
-             "category": category, "due_date": due_date, "notes": notes},
+            {
+                "id": task_id, "name": name, "priority": priority,
+                "category": category, "due_date": due_date, "due_time": due_time,
+                "notes": notes, "reminder_at": reminder_at,
+                "reminder_sent": 0, "recurrence": recurrence,
+                "recurrence_end_date": recurrence_end,
+            },
             title="Task Added",
         )
 
@@ -491,27 +773,65 @@ def list_tasks(status, category, priority):
 # ── complete ──────────────────────────────────────────────────────────────────
 
 @cli.command()
-@click.argument("task_id")
+@click.argument("task_id", required=False)
 def complete(task_id):
-    """Mark a task as completed."""
+    """Mark a task as completed.  Run without ID to pick from a list."""
     ctrl = _get_ctrl()
-    ok, err = ctrl.complete_task(task_id.upper())
+    if not task_id:
+        tasks = ctrl.list_tasks(status="pending")
+        if not tasks:
+            console.print("  [dim]No pending tasks.[/dim]")
+            return
+        console.print(_task_table(tasks, "Pending Tasks"))
+        task_id = Prompt.ask("  [white]Task ID to complete[/white]").strip()
+    task_id = task_id.lstrip("-").upper()
+    if not task_id:
+        console.print("  [red]No task ID provided.[/red]")
+        return
+    task, _ = ctrl.get_task(task_id)
+    if task and task.get("status") == "completed":
+        console.print(f"  [yellow]⚠[/yellow] [white]{task['name']}[/white] [dim]({task_id})[/dim] is already completed.")
+        return
+    ok, err = ctrl.complete_task(task_id)
     if ok:
-        console.print(f"  [green]✓[/green] [white]{task_id.upper()}[/white] marked as done.")
+        task, _ = ctrl.get_task(task_id)
+        name = task["name"] if task else task_id
+        console.print(f"  [green]✓[/green] [bold white]{name}[/bold white] [dim]({task_id})[/dim] — done!")
     else:
         console.print(f"  [red]Error:[/red] {err}")
+        console.print(f"  [dim]Tip: run [white]taskflow list[/white] to see valid IDs.[/dim]")
 
 
 # ── delete ────────────────────────────────────────────────────────────────────
 
 @cli.command()
-@click.argument("task_id")
+@click.argument("task_id", required=False)
 def delete(task_id):
-    """Soft-delete a task."""
+    """Soft-delete a task (moves to recycle bin).  Run without ID to pick from a list."""
     ctrl = _get_ctrl()
-    ok, err = ctrl.delete_task(task_id.upper())
+    if not task_id:
+        tasks = ctrl.list_tasks(status="pending")
+        if not tasks:
+            console.print("  [dim]No tasks to delete.[/dim]")
+            return
+        console.print(_task_table(tasks, "Tasks"))
+        task_id = Prompt.ask("  [white]Task ID to delete[/white]").strip()
+    task_id = task_id.lstrip("-").upper()
+    if not task_id:
+        console.print("  [red]No task ID provided.[/red]")
+        return
+    task, err = ctrl.get_task(task_id)
+    if err or not task:
+        console.print(f"  [red]Task not found:[/red] {task_id}")
+        console.print(f"  [dim]Run [white]taskflow list[/white] to see valid IDs.[/dim]")
+        return
+    if not Confirm.ask(f"  Delete [white]{task['name']}[/white] [dim]({task_id})[/dim]?", default=False):
+        console.print("  [dim]Cancelled.[/dim]")
+        return
+    ok, err = ctrl.delete_task(task_id)
     if ok:
-        console.print(f"  [dim]Moved {task_id.upper()} to recycle bin.  Use [white]taskflow restore {task_id.upper()}[/white] to undo.[/dim]")
+        console.print(f"  [dim]Moved [white]{task['name']}[/white] [dim]({task_id})[/dim] to recycle bin.[/dim]")
+        console.print(f"  [dim]Undo: [white]taskflow restore {task_id}[/white][/dim]")
     else:
         console.print(f"  [red]Error:[/red] {err}")
 
@@ -519,15 +839,29 @@ def delete(task_id):
 # ── restore ───────────────────────────────────────────────────────────────────
 
 @cli.command()
-@click.argument("task_id")
+@click.argument("task_id", required=False)
 def restore(task_id):
-    """Restore a task from the recycle bin."""
+    """Restore a task from the recycle bin.  Run without ID to pick from the bin."""
     ctrl = _get_ctrl()
-    ok, err = ctrl.restore_task(task_id.upper())
+    if not task_id:
+        tasks = ctrl.list_bin()
+        if not tasks:
+            console.print("  [dim]Recycle bin is empty.[/dim]")
+            return
+        console.print(_task_table(tasks, "Recycle Bin"))
+        task_id = Prompt.ask("  [white]Task ID to restore[/white]").strip()
+    task_id = task_id.lstrip("-").upper()
+    if not task_id:
+        console.print("  [red]No task ID provided.[/red]")
+        return
+    ok, err = ctrl.restore_task(task_id)
     if ok:
-        console.print(f"  [green]Restored[/green] {task_id.upper()}.")
+        task, _ = ctrl.get_task(task_id)
+        name = task["name"] if task else task_id
+        console.print(f"  [green]✓ Restored:[/green] [bold white]{name}[/bold white] [dim]({task_id})[/dim]")
     else:
         console.print(f"  [red]Error:[/red] {err}")
+        console.print(f"  [dim]Run [white]taskflow bin[/white] to see what's in the recycle bin.[/dim]")
 
 
 # ── bin ───────────────────────────────────────────────────────────────────────
@@ -561,41 +895,123 @@ def edit(task_id):
         border_style="dim",
     ))
 
-    name     = Prompt.ask(f"Name     [dim][{task['name']}][/dim]",              default="")
-    category = Prompt.ask(f"Category [dim][{task['category']}][/dim]",          choices=VALID_CATEGORIES + [""], default="")
-    priority = Prompt.ask(f"Priority [dim][{task['priority']}][/dim]",          choices=VALID_PRIORITIES + [""], default="")
-    due_date = Prompt.ask(f"Due date [dim][{task.get('due_date','--')}][/dim]", default="")
-    notes    = Prompt.ask(f"Notes    [dim][{task.get('notes','--')}][/dim]",    default="")
+    _cat_map = {c.lower(): c for c in VALID_CATEGORIES}
+    _pri_map = {p.lower(): p for p in VALID_PRIORITIES}
+
+    _cur_remind = task.get("reminder_at") or "--"
+    if task.get("reminder_sent"):
+        _cur_remind += " (already sent)"
+
+    name      = Prompt.ask(f"  Name      [dim][{task['name']}][/dim]",    default="").strip()
+    cat_raw   = Prompt.ask(f"  Category  [dim][{task['category']}][/dim]", default="").strip()
+    pri_raw   = Prompt.ask(f"  Priority  [dim][{task['priority']}][/dim]", default="").strip()
+    due_date  = Prompt.ask(f"  Due date  [dim][{task.get('due_date','--')}][/dim]", default="").strip()
+    due_time  = Prompt.ask(f"  Due time  [dim][{task.get('due_time','--')}][/dim]", default="").strip()
+    remind_in = Prompt.ask(f"  Reminder  [dim][{_cur_remind}][/dim]", default="").strip()
+    notes     = Prompt.ask(f"  Notes     [dim][{task.get('notes','--')}][/dim]", default="").strip()
 
     updates = {}
-    if name.strip():     updates["name"]     = name.strip()
-    if category.strip(): updates["category"] = category.strip()
-    if priority.strip(): updates["priority"] = priority.strip()
-    if due_date.strip():
+    if name:
+        updates["name"] = name
+
+    if cat_raw:
+        cat_norm = _cat_map.get(cat_raw.lower())
+        if cat_norm:
+            updates["category"] = cat_norm
+        else:
+            console.print(f"  [yellow]Invalid category '{cat_raw}' — skipped. Valid: {', '.join(VALID_CATEGORIES)}[/yellow]")
+
+    if pri_raw:
+        pri_norm = _pri_map.get(pri_raw.lower())
+        if pri_norm:
+            updates["priority"] = pri_norm
+        else:
+            console.print(f"  [yellow]Invalid priority '{pri_raw}' — skipped. Valid: {', '.join(VALID_PRIORITIES)}[/yellow]")
+
+    # Resolve effective due date+time after any edits (needed for reminder check)
+    _eff_due_date = due_date if due_date else task.get("due_date")
+    _eff_due_time = due_time if due_time else task.get("due_time")
+
+    if due_date:
         try:
-            date.fromisoformat(due_date.strip())
-            updates["due_date"] = due_date.strip()
+            parsed_d = date.fromisoformat(due_date)
+            if parsed_d < today_local():
+                console.print(f"  [yellow]⚠ '{due_date}' is in the past.[/yellow]")
+                if not Confirm.ask("  Save anyway?", default=False):
+                    console.print("  [dim]Due date change skipped.[/dim]")
+                    due_date = ""
+                    _eff_due_date = task.get("due_date")
+            if due_date:
+                updates["due_date"] = due_date
         except ValueError:
-            console.print("[red]Invalid date -- skipped.[/red]")
-    if notes.strip(): updates["notes"] = notes.strip()
+            console.print("  [red]Invalid date format — skipped. Use YYYY-MM-DD.[/red]")
+
+    if due_time:
+        try:
+            datetime.strptime(due_time, "%H:%M")
+            updates["due_time"] = due_time
+        except ValueError:
+            console.print("  [red]Invalid time format — skipped. Use HH:MM (e.g. 14:30).[/red]")
+
+    # ── Reminder validation ────────────────────────────────────────────────────
+    if remind_in:
+        _now = now_local()
+        try:
+            r_dt = datetime.strptime(remind_in, "%Y-%m-%d %H:%M")
+            if r_dt <= _now:
+                console.print(
+                    f"  [red]✗ '{remind_in}' is in the past — reminder won't fire. Skipped.[/red]"
+                )
+            else:
+                # Warn if reminder is after due datetime
+                if _eff_due_date:
+                    try:
+                        _d = date.fromisoformat(_eff_due_date)
+                        _t_obj = datetime.strptime(_eff_due_time, "%H:%M").time() if _eff_due_time else None
+                        _due_dt = datetime.combine(_d, _t_obj, tzinfo=get_tz()) if _t_obj else datetime(_d.year, _d.month, _d.day, 23, 59, tzinfo=get_tz())
+                        if r_dt > _due_dt:
+                            console.print(f"  [yellow]⚠ Reminder is set AFTER the due time.[/yellow]")
+                            if not Confirm.ask("  Keep this reminder time?", default=False):
+                                remind_in = ""
+                    except (ValueError, TypeError):
+                        pass
+                if remind_in:
+                    updates["reminder_at"]   = remind_in
+                    updates["reminder_sent"] = 0   # reset so it fires again
+        except ValueError:
+            console.print("  [red]Invalid reminder format — skipped. Use YYYY-MM-DD HH:MM[/red]")
+
+    if notes:
+        updates["notes"] = notes
 
     if not updates:
-        console.print("[dim]No changes.[/dim]")
+        console.print("  [dim]No changes made.[/dim]")
         return
     ok, err = ctrl.edit_task(task_id.upper(), **updates)
-    console.print("  [green]Updated.[/green]" if ok else f"  [red]Error:[/red] {err}")
+    if ok:
+        task, _ = ctrl.get_task(task_id.upper())
+        if task:
+            _render_task_card(task, title="Updated")
+    else:
+        console.print(f"  [red]Error:[/red] {err}")
 
 
 # ── search ────────────────────────────────────────────────────────────────────
 
 @cli.command()
-@click.argument("query")
+@click.argument("query", required=False)
 def search(query):
-    """Search tasks."""
-    ctrl  = _get_ctrl()
+    """Search tasks by name, category, or notes.  Run without query to be prompted."""
+    ctrl = _get_ctrl()
+    if not query:
+        query = Prompt.ask("  [white]Search query[/white]").strip()
+    if not query:
+        console.print("  [red]No query provided.[/red]")
+        return
     tasks = ctrl.list_tasks(search=query)
     if not tasks:
-        console.print(f"  [dim]No results for '{query}'.[/dim]")
+        console.print(f"  [dim]No tasks matching '[white]{query}[/white]'.[/dim]")
+        console.print(f"  [dim]Search checks task name, category, and notes.[/dim]")
         return
     console.print(_task_table(tasks, f"Search: '{query}'"))
     console.print(f"  [dim]{len(tasks)} result(s)[/dim]")
@@ -634,6 +1050,37 @@ def weather(city):
     ))
 
 
+# ── Reminder Daemon ──────────────────────────────────────────────────────────
+
+def _reminder_daemon(ctrl, console_ref):
+    """
+    Background thread: checks every 30s for tasks whose reminder_at has passed.
+    Prints a bold bell notification to the terminal and marks reminder as sent.
+    Runs as daemon=True so it dies automatically when the main process exits.
+    """
+    import time as _time
+    while True:
+        try:
+            due = ctrl.get_due_reminders()
+            for task in due:
+                due_part = ""
+                if task.get("due_date"):
+                    due_part = f"  [dim]{task['due_date']}"
+                    if task.get("due_time"):
+                        due_part += f" {task['due_time']}"
+                    due_part += "[/dim]"
+                console_ref.print(
+                    f"\n  [bold cyan]🔔 REMINDER:[/bold cyan] "
+                    f"[bold white]{task['name']}[/bold white]"
+                    + due_part
+                    + f"  [dim]({task['category']} · {task['priority']})[/dim]"
+                )
+                ctrl.mark_reminder_sent(task["id"])
+        except Exception:
+            pass
+        _time.sleep(30)
+
+
 # ── chat ──────────────────────────────────────────────────────────────────────
 
 @cli.command()
@@ -642,6 +1089,10 @@ def chat():
     ctrl    = _get_ctrl()
     history = []
     draft   = {}
+
+    # Start reminder daemon — checks every 30s for due reminders
+    import threading as _rt
+    _rt.Thread(target=_reminder_daemon, args=(ctrl, console), daemon=True).start()
 
     console.print(Panel(
         "[bold white]TaskFlow AI Chat[/bold white]\n\n"
@@ -971,6 +1422,11 @@ def chat():
 
             elif result_type == "task_deleted":
                 console.print(f"  [dim]Moved {result_data['id']} to recycle bin.[/dim]\n")
+
+            elif result_type == "reminder_set":
+                t = result_data
+                remind_time = t.get("reminder_at", "")
+                console.print(f"  [cyan]🔔[/cyan] Reminder set for [white]{t['name']}[/white] at [cyan]{remind_time}[/cyan]\n")
 
             elif result_type == "analytics":
                 s  = result_data
