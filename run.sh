@@ -124,7 +124,7 @@ echo -e "${GREEN}✅ Global command installed${NC}"
 
 # ── Launch app ────────────────────────────────────────────────────────────────
 echo ""
-echo -e "${GREEN}🚀 Launching TaskFlow Pro...${NC}"
+echo -e "${GREEN} Launching TaskFlow Pro...${NC}"
 echo ""
 
 python "$PROJECT_DIR/main.py" "$@"
