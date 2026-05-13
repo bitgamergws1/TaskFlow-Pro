@@ -314,7 +314,7 @@ def _save_city(city: str):
         with open(CITY_FILE, "w") as f:
             f.write(city.strip())
     except Exception:
-        pass
+        return  # City cache write failure is non-critical
 
 
 def _detect_city_from_ip():
@@ -391,7 +391,7 @@ def _task_table(tasks, title="Tasks"):
                     due_str = f"[red]{t['due_date']}![/red]"
                     overdue = True
             except ValueError:
-                pass
+                due_str = t.get("due_date", "--")  # malformed date — display as-is
 
         name_str = f"[dim]{t['name']}[/dim]" if t["status"] == "completed" else (
             f"[red]{t['name']}[/red]" if overdue else t["name"]
@@ -667,7 +667,7 @@ def add(use_ai):
                 _t = datetime.strptime(due_time, "%H:%M").time() if due_time else None
                 _due_dt = datetime.combine(_d, _t, tzinfo=get_tz()) if _t else datetime(_d.year, _d.month, _d.day, 23, 59, tzinfo=get_tz())
             except (ValueError, TypeError):
-                pass
+                _due_dt = None  # malformed date/time — skip reminder suggestion
 
         _due_is_future = (_due_dt is not None and _due_dt > _now)
         _no_due        = (due_date is None)
@@ -974,7 +974,7 @@ def edit(task_id):
                             if not Confirm.ask("  Keep this reminder time?", default=False):
                                 remind_in = ""
                     except (ValueError, TypeError):
-                        pass
+                        pass  # effective due datetime unparseable — skip after-due warning
                 if remind_in:
                     updates["reminder_at"]   = remind_in
                     updates["reminder_sent"] = 0   # reset so it fires again
