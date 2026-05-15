@@ -268,13 +268,44 @@ OPTIONAL FIELDS — ask only when contextually relevant:
 
 COLLECTION STRATEGY:
   1. Extract everything possible from the first message → emit update_draft.
-  2. Ask for missing MANDATORY fields one at a time (name → due_date → priority → category).
+  2. Ask for missing MANDATORY fields ONE AT A TIME (name → due_date → priority → category).
+     ⚠ NEVER ask for a field already in the draft. Check draft before asking anything.
   3. Once all 4 mandatory fields are in draft → emit confirm_task for preview.
   4. After user confirms ("haan", "save karo", "yes") → emit create_task.
   5. User can skip optional fields at any point — never block on them.
   6. If user says "bas save karo" / "create karo" but mandatory fields are still missing
      → do NOT create. Politely say which field is still needed.
      Example: "Ek kaam — due date batao, phir save kar deta hun."
+
+AUTO-FILL RULE (CRITICAL):
+  When user says "fill yourself", "you decide", "use your discretion", "bas bana do",
+  "khud bhar do", "whatever", "your choice", or similar — auto-fill ALL remaining fields:
+  ◦ priority    → "Medium" unless task sounds urgent/health-critical (then "High")
+  ◦ category    → infer from task name (water/gym/sleep → Health, work/project → Work, etc.)
+  ◦ due_date    → today's date if missing
+  ◦ due_time    → keep if already set; else skip
+  ◦ recurrence  → "daily" if task sounds habitual; "none" otherwise
+  ◦ reminder_at → AUTO-SET to 30 minutes before due_time if due_time is set,
+                  OR to today 08:00 if no due_time but task is health/daily habit.
+                  Format: "YYYY-MM-DD HH:MM"
+  ◦ notes       → Write 1 brief context note. Examples:
+                  "Drink Water" → "Stay hydrated — aim for 8 glasses throughout the day."
+                  "Gym" → "Workout session. Warm up for 5 min before starting."
+                  "Study" → "Focused study block. Minimize distractions."
+  Then immediately emit confirm_task with ALL fields populated. Do NOT ask any more questions.
+
+REMINDER AUTO-SET RULE:
+  If task has a due_time AND user has not explicitly declined a reminder:
+  → Always set reminder_at = due_time minus 30 minutes (same date).
+  → If due_time minus 30 min is in the past → use due_time itself.
+  → Include reminder_at in update_draft and confirm_task payloads.
+
+DRAFT MEMORY RULE:
+  The draft context above shows what is ALREADY collected.
+  Before asking ANY question, check if that field is already in the draft.
+  If priority is in draft → do NOT ask for priority again.
+  If category is in draft → do NOT ask for category again.
+  Repeating questions for fields already captured = serious UX bug.
 
 REPLY: In user's language — confirm what you captured, ask exactly ONE missing field.
        Example: "Gym jana note kar liya! Kab tak karna hai?" (not "Please provide name, priority, date...")
@@ -348,10 +379,22 @@ CHAT_SYSTEM = """You are TaskFlow AI — a sharp, no-filler productivity assista
 
 TODAY: {today}
 
-=== LANGUAGE RULE ===
-Detect the language/style of each user message and reply in the EXACT same language.
-English → English | Hindi → Hindi | Hinglish → Hinglish | any other → match it.
-Never switch language. Never translate.
+=== LANGUAGE RULE (NON-NEGOTIABLE) ===
+Detect the language of the CURRENT user message — NOT the conversation history.
+Reply in that EXACT same language, always.
+
+English message   → reply fully in English. No Hindi, no Hinglish words at all.
+Hindi message     → reply fully in Hindi/Devanagari. No English mixing.
+Hinglish message  → reply in Hinglish (Roman Hindi). No Devanagari.
+Any other language → match it exactly.
+
+HARD RULES:
+- History may be in Hindi/Hinglish — IGNORE it for language choice.
+- The CURRENT message is the ONLY signal for which language to use.
+- If current message is English → every word of your reply must be English.
+- Never mix languages unless the user's current message itself mixes them.
+- Never translate the user's message into another language.
+- One-word replies ("yes", "ok", "haan") → match the language of the previous USER turn.
 
 === ACTION PLAYBOOK ===
 {action_playbook}
@@ -1037,9 +1080,27 @@ Rewritten message:"""
             task_list_ctx = "Not loaded — do not invent task IDs."
 
         intent_name = (intent_info or {}).get("intent", "unclear")
+        # Detect language of current user message to pass to AI explicitly
+        _msg_lower = user_message.lower()
+        # Simple heuristic: if message contains Devanagari → Hindi, Roman Hindi patterns → Hinglish, else English
+        import unicodedata as _ud
+        _has_devanagari = any(_ud.category(c) == 'Lo' and ord(c) >= 0x0900 and ord(c) <= 0x097F for c in user_message)
+        _hinglish_markers = {"karo", "karna", "hai", "hain", "kya", "nahi", "mera", "meri",
+                             "abhi", "wala", "wali", "bata", "dedo", "karo", "kr", "ho", "hua"}
+        _words = set(_msg_lower.split())
+        if _has_devanagari:
+            _detected_lang = "Hindi (Devanagari script)"
+        elif _words & _hinglish_markers:
+            _detected_lang = "Hinglish (Roman Hindi)"
+        else:
+            _detected_lang = "English"
+
         intent_ctx  = (
             f"Classified intent: {intent_name} — {INTENTS.get(intent_name, '')}\n"
-            f"Stick to this intent. Do NOT emit unrelated task actions."
+            f"Stick to this intent. Do NOT emit unrelated task actions.\n"
+            f"DETECTED MESSAGE LANGUAGE: {_detected_lang}\n"
+            f"Your reply MUST be in {_detected_lang} only. "
+            f"Do NOT use any other language regardless of conversation history."
         )
 
         if location:
@@ -1212,12 +1273,24 @@ Rewritten message:"""
         if err or not raw:
             return raw, err
 
-        # Strip leaked reasoning; find first schedule line as safety net
+        # Strip leaked reasoning/thinking content
         raw = self._strip_thinking(raw)
+
+        # Strip markdown formatting (bold, headers, bullets) — terminal shows plain text
+        raw = re.sub(r'\*\*(.+?)\*\*', r'\1', raw)        # **bold** -> plain
+        raw = re.sub(r'^#{1,3} +', '', raw, flags=re.M)    # ### headers -> plain
+        raw = re.sub(r'^\s*[\*\-] +', '  ', raw, flags=re.M)  # bullet points -> indent
+
+        # Strip leaked JSON fragments from >> summary line
+        # e.g. >> Schedule complete:{"c-priority...} -> >> Schedule complete.
+        raw = re.sub(r'(>>.*?)\{.*', lambda m: m.group(1).rstrip(':').rstrip() + '.', raw)
+
+        # Find first HH:MM line as safety net for any preamble before schedule
         match = re.search(r'(?m)^\d{2}:\d{2}\s*-', raw)
         if match and match.start() > 0:
             raw = raw[match.start():]
-        return raw, None
+
+        return raw.strip(), None
 
     def optimize_schedule(self, tasks):
         if not tasks:
