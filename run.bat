@@ -23,26 +23,27 @@ set "SP[3]=|"
 
 REM Tips shown while install runs
 set "T[0]=Break big tasks into 25-min Pomodoro blocks."
-set "T[1]=High priority tasks first — your brain is freshest in the morning."
-set "T[2]=Name tasks as actions: 'Write report' beats 'Report' every time."
+set "T[1]=High priority first — your brain is freshest in the morning."
+set "T[2]=Name tasks as actions: 'Write report' beats 'Report'."
 set "T[3]=A 3-day streak beats a perfect week you never started."
-set "T[4]=If it takes less than 2 minutes, do it now — don't add it to the list."
+set "T[4]=Less than 2 minutes? Do it now — don't add it to the list."
 set "T[5]=Set due dates even for flexible tasks — deadlines create focus."
-set "T[6]=Group similar tasks by category — context-switching kills momentum."
-set "T[7]=Complete your hardest task before lunch. Everything else feels easy after."
-set "T[8]=Pending tasks drain mental energy even when you are not working on them."
-set "T[9]=What gets measured gets done — check your analytics weekly."
-set "T[10]=Timeboxing beats to-do lists. Schedule the task, not just the intention."
+set "T[6]=Group similar tasks — context-switching kills momentum."
+set "T[7]=Complete your hardest task before lunch. Rest feels easy after."
+set "T[8]=Pending tasks drain energy even when you're not working on them."
+set "T[9]=What gets measured gets done — check analytics weekly."
+set "T[10]=Timeboxing beats to-do lists. Schedule the task, not the intent."
 set "T[11]=Done is better than perfect. Ship, then refine."
-set "T[12]=One task at a time. Multitasking is just fast task-switching — and it costs you."
+set "T[12]=One task at a time. Multitasking is just expensive task-switching."
 set "T[13]=Your future self will thank you for the due date you set today."
-set "T[14]=Productivity is not about doing more — it is about doing what matters."
+set "T[14]=Productivity is not about doing more — it's about what matters."
 set "TIP_COUNT=15"
 
 set "DONE_FILE=%TEMP%\taskflow_install.done"
+set "EC_FILE=%TEMP%\taskflow_install.ec"
 set "LOG_FILE=%TEMP%\taskflow_install.log"
 
-REM Banner
+REM ── Banner ─────────────────────────────────────────────────────────────────
 echo.
 echo %CYAN%%BOLD%
 echo   +==========================================+
@@ -51,7 +52,7 @@ echo   +==========================================+
 echo %NC%
 echo.
 
-REM Python check
+REM ── Python check ───────────────────────────────────────────────────────────
 where python >nul 2>&1
 if errorlevel 1 (
     echo %RED%[ERROR]%NC% Python not found.
@@ -77,7 +78,7 @@ if %PY_MAJOR% EQU 3 if %PY_MINOR% LSS 9 (
 
 echo %GREEN%[OK]%NC%    Python %PY_FULL%
 
-REM Virtual environment
+REM ── Virtual environment ────────────────────────────────────────────────────
 if not exist "venv" (
     echo %DIM%       Creating virtual environment...%NC%
     python -m venv venv
@@ -96,24 +97,28 @@ echo.
 echo %DIM%  Tips will show while we get things ready...%NC%
 echo.
 
-REM Upgrade pip with spinner
+REM ── Upgrade pip ────────────────────────────────────────────────────────────
 if exist "%DONE_FILE%" del "%DONE_FILE%" >nul 2>&1
-start /b cmd /c "venv\Scripts\python.exe -m pip install --upgrade pip --quiet > "%LOG_FILE%" 2>&1 & echo 1 > "%DONE_FILE%""
+if exist "%EC_FILE%"   del "%EC_FILE%"   >nul 2>&1
+start /b cmd /c "venv\Scripts\python.exe -m pip install --upgrade pip --quiet > "%LOG_FILE%" 2>&1 & echo %%ERRORLEVEL%% > "%EC_FILE%" & echo 1 > "%DONE_FILE%""
 set "STEP_LABEL=Upgrading pip   "
 call :tips_wait
-if errorlevel 1 (
+set /p _EC=<"%EC_FILE%"
+if "!_EC!" NEQ "0" (
     echo %RED%[ERROR]%NC% pip upgrade failed. See %LOG_FILE%
     pause & exit /b 1
 )
 echo %GREEN%[OK]%NC%    pip up to date
 
-REM Install dependencies with spinner
+REM ── Install dependencies ───────────────────────────────────────────────────
 if exist "requirements.txt" (
     if exist "%DONE_FILE%" del "%DONE_FILE%" >nul 2>&1
-    start /b cmd /c "venv\Scripts\python.exe -m pip install --quiet -r requirements.txt > "%LOG_FILE%" 2>&1 & echo 1 > "%DONE_FILE%""
+    if exist "%EC_FILE%"   del "%EC_FILE%"   >nul 2>&1
+    start /b cmd /c "venv\Scripts\python.exe -m pip install --quiet -r requirements.txt > "%LOG_FILE%" 2>&1 & echo %%ERRORLEVEL%% > "%EC_FILE%" & echo 1 > "%DONE_FILE%""
     set "STEP_LABEL=Installing deps "
     call :tips_wait
-    if errorlevel 1 (
+    set /p _EC=<"%EC_FILE%"
+    if "!_EC!" NEQ "0" (
         echo %RED%[ERROR]%NC% Dependency install failed. See %LOG_FILE%
         pause & exit /b 1
     )
@@ -122,19 +127,25 @@ if exist "requirements.txt" (
     echo %YELLOW%[WARN]%NC%  requirements.txt not found — skipping
 )
 
-REM tzdata check (always needed on Windows — no built-in IANA tz data)
+REM ── tzdata check ───────────────────────────────────────────────────────────
 venv\Scripts\python.exe -c "from zoneinfo import ZoneInfo; ZoneInfo('UTC')" >nul 2>&1
 if errorlevel 1 (
     if exist "%DONE_FILE%" del "%DONE_FILE%" >nul 2>&1
-    start /b cmd /c "venv\Scripts\python.exe -m pip install --quiet tzdata > "%LOG_FILE%" 2>&1 & echo 1 > "%DONE_FILE%""
+    if exist "%EC_FILE%"   del "%EC_FILE%"   >nul 2>&1
+    start /b cmd /c "venv\Scripts\python.exe -m pip install --quiet tzdata > "%LOG_FILE%" 2>&1 & echo %%ERRORLEVEL%% > "%EC_FILE%" & echo 1 > "%DONE_FILE%""
     set "STEP_LABEL=Installing tz   "
     call :tips_wait
+    set /p _EC=<"%EC_FILE%"
+    if "!_EC!" NEQ "0" (
+        echo %RED%[ERROR]%NC% tzdata install failed. See %LOG_FILE%
+        pause & exit /b 1
+    )
     echo %GREEN%[OK]%NC%    tzdata installed
 ) else (
     echo %GREEN%[OK]%NC%    Timezone data
 )
 
-REM Launch
+REM ── Launch ─────────────────────────────────────────────────────────────────
 echo.
 echo %GREEN%%BOLD%  All set. Launching TaskFlow Pro...%NC%
 echo.
@@ -143,7 +154,7 @@ python main.py %*
 goto :eof
 
 
-REM Tips spinner subroutine
+REM ── Tips spinner subroutine ────────────────────────────────────────────────
 REM Waits until %DONE_FILE% appears, spinning tips in the meantime.
 :tips_wait
 set /a _spin=0
@@ -164,7 +175,9 @@ set /a _tidx=_tip %% TIP_COUNT
 call set "_sc=%%SP[!_sidx!]%%"
 call set "_tc=%%T[!_tidx!]%%"
 
-<nul set /p "=!CR!  %CYAN%[!_sc!]%NC%  %DIM%!STEP_LABEL!%NC%  !_tc!     "
+REM Truncate tip to 55 chars so it never wraps to next line
+set "_tc_short=!_tc:~0,55!"
+<nul set /p "=!CR!  %CYAN%[!_sc!]%NC%  %DIM%!STEP_LABEL!%NC%  !_tc_short!          "
 
 timeout /t 1 /nobreak >nul
 
