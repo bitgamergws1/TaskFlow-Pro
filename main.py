@@ -1565,7 +1565,7 @@ def optimize():
             try:
                 os.unlink(tmp_path)
             except Exception:
-                return  # cleanup failure is non-critical
+                pass  # temp file cleanup failure is non-critical — do not interrupt flow
 
     # Step 6: Final display
     console.print()
