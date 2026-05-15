@@ -698,7 +698,19 @@ class AIGateway:
             '', text
         )
 
-        # 4. Trailing/leading artefacts left by above passes
+        # 4. {"type":"reasoning","content":"..."} blocks — the format r2 leaks
+        #    when its internal chain-of-thought bleeds into the text reply field.
+        text = re.sub(
+            r'\{[^{}]*"type"\s*:\s*"reasoning"[^{}]*\}',
+            '', text
+        )
+        # Also catch truncated/broken variants: {"type":"reaso... up to next {
+        text = re.sub(
+            r'\{"type"\s*:\s*"reaso[^}]*',
+            '', text
+        )
+
+        # 5. Trailing/leading artefacts left by above passes
         text = re.sub(r'\n{3,}', '\n\n', text)   # collapse excessive blank lines
         return text.strip()
 
@@ -1156,6 +1168,57 @@ Rewritten message:"""
 
     # Schedule Optimizer
 
+    def generate_schedule_variant(self, tasks, goal, start_time, end_time,
+                                    deadline_task, mode_name, mode_desc):
+        """
+        Generate a single schedule variant for the given mode.
+        Called in parallel (3 threads) from the optimize command.
+        Returns (schedule_text, error).
+        """
+        task_lines = "\n".join(
+            f"  [{t['priority']}] {t['name']} | Due: {t.get('due_date') or 'flexible'} | {t.get('category', 'General')}"
+            for t in tasks
+        )
+        deadline_line = ""
+        if deadline_task:
+            deadline_line = (
+                f"\nHard deadline today: {deadline_task['name']} "
+                f"(due: {deadline_task.get('due_date', 'today')})\n"
+            )
+        goal_desc = {
+            "deep_work":    "maximize uninterrupted focus blocks (90+ min), batch all admin at the end",
+            "balanced":     "balance deep work and quick tasks, energy-aware pacing throughout the day",
+            "quick_wins":   "start with short tasks (<25 min) to build momentum, then go deeper",
+            "health_first": "prioritize health/fitness tasks early, protect lunch and movement breaks",
+        }.get(goal, "balanced approach")
+
+        prompt = (
+            f"You are a productivity expert. Build a focused time-blocked schedule.\n\n"
+            f"Mode: {mode_name} — {mode_desc}\n"
+            f"Goal approach: {goal_desc}\n"
+            f"Time window: {start_time} to {end_time}\n"
+            f"{deadline_line}"
+            f"Tasks to schedule:\n{task_lines}\n\n"
+            f"Rules:\n"
+            f"- Only schedule tasks from the list above — do not invent tasks\n"
+            f"- High priority first within the mode constraints\n"
+            f"- 25-min Pomodoro blocks, 5-min breaks, 15-min break every 90 min\n"
+            f"- Group tasks by category where possible\n"
+            f"- Be realistic — do not schedule more than fits in the window\n\n"
+            f"Format: HH:MM - HH:MM | Task Name | [Priority] | Category\n"
+            f"End with one summary line starting with >>"
+        )
+        raw, err = self._call(DEEPSHI_R1, prompt, timeout=60)
+        if err or not raw:
+            return raw, err
+
+        # Strip leaked reasoning; find first schedule line as safety net
+        raw = self._strip_thinking(raw)
+        match = re.search(r'(?m)^\d{2}:\d{2}\s*-', raw)
+        if match and match.start() > 0:
+            raw = raw[match.start():]
+        return raw, None
+
     def optimize_schedule(self, tasks):
         if not tasks:
             return None, "No pending tasks."
@@ -1171,7 +1234,18 @@ Rewritten message:"""
             f"Format each block: HH:MM - HH:MM | Task | [Priority] | Category\n"
             f"End with one line starting with >>"
         )
-        return self._call(DEEPSHI, prompt, timeout=120)
+        raw, err = self._call(DEEPSHI, prompt, timeout=120)
+        if err or not raw:
+            return raw, err
+
+        # Safety net: if reasoning content still leaked before the schedule,
+        # find the first HH:MM line and discard everything before it.
+        schedule = raw
+        match = re.search(r'(?m)^\d{2}:\d{2}\s*-', schedule)
+        if match and match.start() > 0:
+            schedule = schedule[match.start():]
+
+        return schedule, None
 
     # Motivation
 
