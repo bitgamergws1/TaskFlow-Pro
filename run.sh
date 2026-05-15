@@ -1,158 +1,183 @@
-@echo off
-chcp 65001 >nul 2>&1
-setlocal EnableDelayedExpansion
+#!/usr/bin/env bash
+# run.sh — TaskFlow Pro one-command setup & launcher
+# Works on Linux, macOS, and Termux
 
-REM Enable ANSI colors on Windows 10+
-for /f %%a in ('echo prompt $E^| cmd /q') do set "ESC=%%a"
-set "GREEN=%ESC%[32m"
-set "CYAN=%ESC%[36m"
-set "YELLOW=%ESC%[33m"
-set "RED=%ESC%[31m"
-set "DIM=%ESC%[2m"
-set "BOLD=%ESC%[1m"
-set "NC=%ESC%[0m"
+set -e
 
-REM Tips shown while install runs
-set "T[0]=Break big tasks into 25-min Pomodoro blocks."
-set "T[1]=High priority first — brain is freshest in the morning."
-set "T[2]=Name tasks as actions: 'Write report' beats 'Report'."
-set "T[3]=A 3-day streak beats a perfect week you never started."
-set "T[4]=Less than 2 minutes? Do it now — don't add it to the list."
-set "T[5]=Set due dates even for flexible tasks — deadlines create focus."
-set "T[6]=Group similar tasks — context-switching kills momentum."
-set "T[7]=Complete your hardest task before lunch. Rest feels easy after."
-set "T[8]=Pending tasks drain energy even when you are not working."
-set "T[9]=What gets measured gets done — check analytics weekly."
-set "T[10]=Timeboxing beats to-do lists. Schedule the task, not just intent."
-set "T[11]=Done is better than perfect. Ship, then refine."
-set "T[12]=One task at a time. Multitasking is expensive task-switching."
-set "T[13]=Your future self will thank you for the due date you set today."
-set "T[14]=Productivity is not about doing more — it is about what matters."
-set "TIP_COUNT=15"
+# Colors
+CYAN='\033[0;36m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+DIM='\033[2m'
+BOLD='\033[1m'
+NC='\033[0m'
 
-set "DONE_FILE=%TEMP%\taskflow_install.done"
-set "EC_FILE=%TEMP%\taskflow_install.ec"
-set "LOG_FILE=%TEMP%\taskflow_install.log"
-
-REM ── Banner ─────────────────────────────────────────────────────────────────
-echo.
-echo %CYAN%%BOLD%
-echo   +==========================================+
-echo   ^|   TaskFlow Pro -- DevNest Setup (Win)   ^|
-echo   +==========================================+
-echo %NC%
-echo.
-
-REM ── Python check ───────────────────────────────────────────────────────────
-where python >nul 2>&1
-if errorlevel 1 (
-    echo %RED%[ERROR]%NC% Python not found.
-    echo         Install from https://python.org
-    echo         Check "Add Python to PATH" during install.
-    pause & exit /b 1
+# Tips shown while dependencies install
+TIPS=(
+    "Break big tasks into 25-min Pomodoro blocks."
+    "High priority tasks first — your brain is freshest in the morning."
+    "Name tasks as actions: 'Write report' beats 'Report' every time."
+    "A 3-day streak beats a perfect week you never started."
+    "If it takes less than 2 minutes, do it now — don't add it to the list."
+    "Set due dates even for flexible tasks — deadlines create focus."
+    "Group similar tasks by category — context-switching kills momentum."
+    "Complete your hardest task before lunch. Everything else feels easy after."
+    "Pending tasks drain mental energy even when you are not working on them."
+    "What gets measured gets done — check your analytics weekly."
+    "Timeboxing beats to-do lists. Schedule the task, not just the intention."
+    "Done is better than perfect. Ship, then refine."
+    "One task at a time. Multitasking is just fast task-switching — and it costs you."
+    "Your future self will thank you for the due date you set today."
+    "Productivity is not about doing more — it is about doing what matters."
 )
 
-for /f "tokens=2 delims= " %%v in ('python --version 2^>^&1') do set "PY_FULL=%%v"
-for /f "tokens=1,2 delims=." %%a in ("%PY_FULL%") do (
-    set "PY_MAJOR=%%a"
-    set "PY_MINOR=%%b"
-)
+SPINNERS=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
 
-if %PY_MAJOR% LSS 3 (
-    echo %RED%[ERROR]%NC% Python 3.9+ required. Found %PY_FULL%.
-    pause & exit /b 1
-)
-if %PY_MAJOR% EQU 3 if %PY_MINOR% LSS 9 (
-    echo %RED%[ERROR]%NC% Python 3.9+ required. Found %PY_FULL%.
-    pause & exit /b 1
-)
+# Show rotating tips while a background PID is running
+_tips_spinner() {
+    local pid=$1
+    local label=$2
+    local tip_idx=0
+    local spin_idx=0
+    local tick=0
 
-echo %GREEN%[OK]%NC%    Python %PY_FULL%
+    while kill -0 "$pid" 2>/dev/null; do
+        local spin="${SPINNERS[$spin_idx]}"
+        local tip="${TIPS[$tip_idx]}"
+        printf "\r  ${CYAN}${spin}${NC}  ${DIM}%-10s${NC}  ${tip}%-20s" "$label" " "
+        sleep 0.12
+        spin_idx=$(( (spin_idx + 1) % ${#SPINNERS[@]} ))
+        tick=$(( tick + 1 ))
+        # Rotate tip every ~3 seconds (25 ticks * 0.12s = 3s)
+        if (( tick % 25 == 0 )); then
+            tip_idx=$(( (tip_idx + 1) % ${#TIPS[@]} ))
+        fi
+    done
 
-REM ── Virtual environment ────────────────────────────────────────────────────
-if not exist "venv" (
-    echo %DIM%  [..] Creating virtual environment...%NC%
-    python -m venv venv
-    if errorlevel 1 (
-        echo %RED%[ERROR]%NC% Failed to create virtual environment.
-        pause & exit /b 1
-    )
-    echo %GREEN%[OK]%NC%    Virtual environment created
-) else (
-    echo %GREEN%[OK]%NC%    Virtual environment exists
-)
+    # Clear the tip line
+    printf "\r%-80s\r" " "
+}
 
-call venv\Scripts\activate.bat
-echo.
+# Run a command in background, show tips while it runs, then check exit code
+_run_with_tips() {
+    local label=$1
+    shift
+    "$@" > /tmp/taskflow_install.log 2>&1 &
+    local pid=$!
+    _tips_spinner "$pid" "$label"
+    wait "$pid"
+    local code=$?
+    if [ $code -ne 0 ]; then
+        echo -e "${RED}[ERROR] $label failed. Check /tmp/taskflow_install.log${NC}"
+        cat /tmp/taskflow_install.log
+        exit $code
+    fi
+    echo -e "${GREEN}[OK]${NC}    $label"
+}
 
-REM ── Install dependencies ───────────────────────────────────────────────────
-if exist "requirements.txt" (
-    if exist "%DONE_FILE%" del "%DONE_FILE%" >nul 2>&1
-    if exist "%EC_FILE%"   del "%EC_FILE%"   >nul 2>&1
-    start /b cmd /c "venv\Scripts\python.exe -m pip install --quiet -r requirements.txt > "%LOG_FILE%" 2>&1 & echo %%ERRORLEVEL%% > "%EC_FILE%" & echo 1 > "%DONE_FILE%""
-    set "STEP_LABEL=Installing"
-    call :tips_wait
-    set /p _EC=<"%EC_FILE%"
-    set "_EC=!_EC: =!"
-    if "!_EC!" NEQ "0" (
-        echo %RED%[ERROR]%NC% Dependency install failed. See %LOG_FILE%
-        pause & exit /b 1
-    )
-    echo %GREEN%[OK]%NC%    Dependencies ready
-) else (
-    echo %YELLOW%[WARN]%NC%  requirements.txt not found — skipping
-)
+# Banner
+echo ""
+echo -e "${CYAN}${BOLD}"
+echo "  ╔══════════════════════════════════════╗"
+echo "  ║      TaskFlow Pro — DevNest          ║"
+echo "  ╚══════════════════════════════════════╝"
+echo -e "${NC}"
+echo ""
 
-REM ── tzdata check ───────────────────────────────────────────────────────────
-venv\Scripts\python.exe -c "from zoneinfo import ZoneInfo; ZoneInfo('UTC')" >nul 2>&1
-if errorlevel 1 (
-    if exist "%DONE_FILE%" del "%DONE_FILE%" >nul 2>&1
-    if exist "%EC_FILE%"   del "%EC_FILE%"   >nul 2>&1
-    start /b cmd /c "venv\Scripts\python.exe -m pip install --quiet tzdata > "%LOG_FILE%" 2>&1 & echo %%ERRORLEVEL%% > "%EC_FILE%" & echo 1 > "%DONE_FILE%""
-    set "STEP_LABEL=tzdata    "
-    call :tips_wait
-    set /p _EC=<"%EC_FILE%"
-    set "_EC=!_EC: =!"
-    if "!_EC!" NEQ "0" (
-        echo %RED%[ERROR]%NC% tzdata install failed. See %LOG_FILE%
-        pause & exit /b 1
-    )
-    echo %GREEN%[OK]%NC%    tzdata installed
-) else (
-    echo %GREEN%[OK]%NC%    Timezone data OK
-)
+# Detect project directory
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-REM ── Launch ─────────────────────────────────────────────────────────────────
-echo.
-echo %GREEN%%BOLD%  All set. Launching TaskFlow Pro...%NC%
-echo.
+# Detect platform
+OS="$(uname)"
+if [[ "$PREFIX" == *"com.termux"* ]]; then
+    PLATFORM="termux"
+elif [[ "$OS" == "Darwin" ]]; then
+    PLATFORM="macos"
+else
+    PLATFORM="linux"
+fi
 
-python main.py %*
-goto :eof
+echo -e "${GREEN}[OK]${NC}    Platform: ${PLATFORM}"
 
+# Python check
+if ! command -v python3 &>/dev/null; then
+    echo -e "${RED}[ERROR] Python 3 not found.${NC}"
+    case "$PLATFORM" in
+        macos)   echo -e "${YELLOW}Install: brew install python${NC}" ;;
+        termux)  echo -e "${YELLOW}Install: pkg install python${NC}" ;;
+        *)       echo -e "${YELLOW}Install Python 3.9+ via your package manager.${NC}" ;;
+    esac
+    exit 1
+fi
 
-REM ── Tips subroutine ────────────────────────────────────────────────────────
-REM Prints one tip every ~3s until DONE_FILE appears.
-REM ping used for silent delay — timeout prints unwanted text in CMD.
-:tips_wait
-set /a _tip=0
+PY_MAJ=$(python3 -c "import sys; print(sys.version_info.major)")
+PY_MIN=$(python3 -c "import sys; print(sys.version_info.minor)")
 
-:_tip_loop
-if exist "%DONE_FILE%" (
-    del "%DONE_FILE%" >nul 2>&1
-    goto :eof
-)
+if [ "$PY_MAJ" -lt 3 ] || { [ "$PY_MAJ" -eq 3 ] && [ "$PY_MIN" -lt 9 ]; }; then
+    echo -e "${RED}[ERROR] Python 3.9+ required (found ${PY_MAJ}.${PY_MIN}).${NC}"
+    exit 1
+fi
 
-set /a _tidx=_tip %% TIP_COUNT
-call set "_tc=%%T[!_tidx!]%%"
-echo   %CYAN%[!STEP_LABEL!]%NC%  %DIM%!_tc!%NC%
+echo -e "${GREEN}[OK]${NC}    Python ${PY_MAJ}.${PY_MIN}"
+echo ""
+echo -e "${DIM}  Tips will show while we get things ready...${NC}"
+echo ""
 
-ping -n 4 127.0.0.1 >nul 2>&1
+# Virtual environment
+if [ ! -d "$PROJECT_DIR/venv" ]; then
+    _run_with_tips "Creating virtualenv" python3 -m venv "$PROJECT_DIR/venv"
+else
+    echo -e "${GREEN}[OK]${NC}    Virtualenv exists — skipping"
+fi
 
-if exist "%DONE_FILE%" (
-    del "%DONE_FILE%" >nul 2>&1
-    goto :eof
-)
+# Activate
+source "$PROJECT_DIR/venv/bin/activate"
 
-set /a _tip+=1
-goto _tip_loop
+# Upgrade pip
+_run_with_tips "Upgrading pip" python -m pip install --upgrade pip
+
+# Install dependencies
+if [ -f "$PROJECT_DIR/requirements.txt" ]; then
+    _run_with_tips "Installing dependencies" pip install -r "$PROJECT_DIR/requirements.txt"
+else
+    echo -e "${YELLOW}[WARN]${NC}  requirements.txt not found — skipping"
+fi
+
+# Timezone data check
+if ! python3 -c "from zoneinfo import ZoneInfo; ZoneInfo('UTC')" 2>/dev/null; then
+    _run_with_tips "Installing tzdata" pip install tzdata
+else
+    echo -e "${GREEN}[OK]${NC}    Timezone data"
+fi
+
+# Global command
+TASKFLOW_CMD='#!/usr/bin/env bash
+source "'"$PROJECT_DIR"'/venv/bin/activate"
+python "'"$PROJECT_DIR"'/main.py" "$@"'
+
+if [[ "$PLATFORM" == "termux" ]]; then
+    echo "$TASKFLOW_CMD" > "$PREFIX/bin/taskflow"
+    chmod +x "$PREFIX/bin/taskflow"
+
+elif [[ "$PLATFORM" == "macos" || "$PLATFORM" == "linux" ]]; then
+    mkdir -p "$HOME/.local/bin"
+    echo "$TASKFLOW_CMD" > "$HOME/.local/bin/taskflow"
+    chmod +x "$HOME/.local/bin/taskflow"
+
+    if ! echo "$PATH" | grep -q "$HOME/.local/bin"; then
+        SHELL_RC="$HOME/.bashrc"
+        [[ "$SHELL" == *"zsh"* ]] && SHELL_RC="$HOME/.zshrc"
+        echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$SHELL_RC"
+        echo -e "${YELLOW}[WARN]${NC}  Restart terminal or run: source $SHELL_RC"
+    fi
+fi
+
+echo -e "${GREEN}[OK]${NC}    Global command installed"
+
+# Launch
+echo ""
+echo -e "${GREEN}${BOLD}  All set. Launching TaskFlow Pro...${NC}"
+echo ""
+
+python "$PROJECT_DIR/main.py" "$@"
