@@ -83,30 +83,17 @@ if not exist "venv" (
 )
 
 call venv\Scripts\activate.bat
-
 echo.
-
-REM ── Upgrade pip ────────────────────────────────────────────────────────────
-if exist "%DONE_FILE%" del "%DONE_FILE%" >nul 2>&1
-if exist "%EC_FILE%"   del "%EC_FILE%"   >nul 2>&1
-start /b cmd /c "venv\Scripts\python.exe -m pip install --upgrade pip --quiet > "%LOG_FILE%" 2>&1 & echo %%ERRORLEVEL%% > "%EC_FILE%" & echo 1 > "%DONE_FILE%""
-set "STEP_LABEL=Upgrading pip"
-call :tips_wait
-set /p _EC=<"%EC_FILE%"
-if "!_EC!" NEQ "0" (
-    echo %RED%[ERROR]%NC% pip upgrade failed. See %LOG_FILE%
-    pause & exit /b 1
-)
-echo %GREEN%[OK]%NC%    pip up to date
 
 REM ── Install dependencies ───────────────────────────────────────────────────
 if exist "requirements.txt" (
     if exist "%DONE_FILE%" del "%DONE_FILE%" >nul 2>&1
     if exist "%EC_FILE%"   del "%EC_FILE%"   >nul 2>&1
     start /b cmd /c "venv\Scripts\python.exe -m pip install --quiet -r requirements.txt > "%LOG_FILE%" 2>&1 & echo %%ERRORLEVEL%% > "%EC_FILE%" & echo 1 > "%DONE_FILE%""
-    set "STEP_LABEL=Installing   "
+    set "STEP_LABEL=Installing"
     call :tips_wait
     set /p _EC=<"%EC_FILE%"
+    set "_EC=!_EC: =!"
     if "!_EC!" NEQ "0" (
         echo %RED%[ERROR]%NC% Dependency install failed. See %LOG_FILE%
         pause & exit /b 1
@@ -122,16 +109,17 @@ if errorlevel 1 (
     if exist "%DONE_FILE%" del "%DONE_FILE%" >nul 2>&1
     if exist "%EC_FILE%"   del "%EC_FILE%"   >nul 2>&1
     start /b cmd /c "venv\Scripts\python.exe -m pip install --quiet tzdata > "%LOG_FILE%" 2>&1 & echo %%ERRORLEVEL%% > "%EC_FILE%" & echo 1 > "%DONE_FILE%""
-    set "STEP_LABEL=tzdata      "
+    set "STEP_LABEL=tzdata    "
     call :tips_wait
     set /p _EC=<"%EC_FILE%"
+    set "_EC=!_EC: =!"
     if "!_EC!" NEQ "0" (
         echo %RED%[ERROR]%NC% tzdata install failed. See %LOG_FILE%
         pause & exit /b 1
     )
     echo %GREEN%[OK]%NC%    tzdata installed
 ) else (
-    echo %GREEN%[OK]%NC%    Timezone data
+    echo %GREEN%[OK]%NC%    Timezone data OK
 )
 
 REM ── Launch ─────────────────────────────────────────────────────────────────
@@ -144,8 +132,8 @@ goto :eof
 
 
 REM ── Tips subroutine ────────────────────────────────────────────────────────
-REM Prints a new tip line every ~3s until DONE_FILE appears.
-REM Uses ping for silent delay — timeout prints unwanted text in CMD.
+REM Prints one tip every ~3s until DONE_FILE appears.
+REM ping used for silent delay — timeout prints unwanted text in CMD.
 :tips_wait
 set /a _tip=0
 
@@ -159,7 +147,6 @@ set /a _tidx=_tip %% TIP_COUNT
 call set "_tc=%%T[!_tidx!]%%"
 echo   %CYAN%[!STEP_LABEL!]%NC%  %DIM%!_tc!%NC%
 
-REM ping 4 times = ~3 second wait, fully silent
 ping -n 4 127.0.0.1 >nul 2>&1
 
 if exist "%DONE_FILE%" (
