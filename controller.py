@@ -275,10 +275,46 @@ class TaskController:
     # AI Features
 
     def optimize_schedule(self):
+        """Single-shot schedule (used by chat /optimize slash command)."""
         pending = self.db.get_tasks(status="pending")
         if not pending:
             return None, "No pending tasks to optimize."
         return self.ai.optimize_schedule(pending)
+
+    def generate_schedule_variants(self, goal, start_time, end_time, deadline_task):
+        """
+        Generate 3 schedule variants in parallel for the interactive optimize flow.
+        Returns list of (mode_name, schedule_text | None, error | None).
+        """
+        import threading
+        pending = self.db.get_tasks(status="pending")
+        if not pending:
+            return []
+
+        MODES = [
+            ("Deep Work Mode",  "maximum focus blocks, minimal interruptions, hardest tasks first"),
+            ("Balanced Mode",   "mix of deep work and admin tasks, energy-aware pacing"),
+            ("Quick Wins Mode", "short tasks first to build momentum, then deeper work blocks"),
+        ]
+
+        results = [None] * len(MODES)
+
+        def _gen(idx, mode_name, mode_desc):
+            sched, err = self.ai.generate_schedule_variant(
+                pending, goal, start_time, end_time, deadline_task, mode_name, mode_desc
+            )
+            results[idx] = (mode_name, sched, err)
+
+        threads = [
+            threading.Thread(target=_gen, args=(i, name, desc), daemon=True)
+            for i, (name, desc) in enumerate(MODES)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        return [r for r in results if r is not None]
 
     def get_motivation(self):
         return self.ai.get_motivation(self.db.get_analytics())
