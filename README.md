@@ -32,8 +32,9 @@ TaskFlow Pro is a fully offline-capable, AI-augmented terminal task manager buil
 - **SQLite** as the primary database — zero latency, works with no internet
 - **Supabase** for background cloud sync — your tasks follow you across devices
 - **Multi-agent AI pipeline** for natural-language task parsing, validation, and scheduling
-- **Intelligent reminder daemon** — background thread fires bell notifications right in the terminal
+- **Intelligent reminder daemon** — background thread fires notifications in the terminal during `dashboard`, `chat`, and `focus` sessions
 - **Recurrence engine** — repeating tasks (daily, weekly, weekdays, monthly)
+- **Interactive schedule optimizer** — asks questions, generates 3 parallel AI variants, lets you pick and edit
 - A **Render-hosted proxy server** that keeps all API keys off your machine entirely
 
 The app is designed to require **no secrets on the client machine**. You clone it, run one script, and you're live.
@@ -45,13 +46,13 @@ The app is designed to require **no secrets on the client machine**. You clone i
 | File | Role |
 |---|---|
 | `main.py` | CLI entry point — all commands, Rich UI, Pomodoro timer, animated AI thinking display |
-| `controller.py` | Logic bridge between database and AI — routes intents to actions |
+| `controller.py` | Logic bridge between database and AI — routes intents to actions, parallel schedule generation |
 | `database.py` | SQLite engine + background Supabase sync + reminder daemon queries |
-| `ai_gateway.py` | Multi-model AI routing, multi-agent decomposition, response validator, prompt enhancer |
+| `ai_gateway.py` | Multi-model AI routing, multi-agent decomposition, response validator, prompt enhancer, schedule variants |
 | `timezone_utils.py` | Dynamic timezone detection via IP — powers all date/time comparisons correctly |
 | `supabase_setup.sql` | Run once in Supabase SQL Editor to set up cloud sync |
-| `run.sh` | One-command setup and launch — Linux / macOS |
-| `run.bat` | One-command setup and launch — Windows |
+| `run.sh` | One-command setup and launch — Linux / macOS (shows rotating tips during install) |
+| `run.bat` | One-command setup and launch — Windows (shows rotating tips during install) |
 | `taskflow` | Short command wrapper — Linux / macOS (`taskflow add`, `taskflow list`, ...) |
 | `taskflow.bat` | Short command wrapper — Windows CMD |
 
@@ -59,7 +60,7 @@ The app is designed to require **no secrets on the client machine**. You clone i
 
 ## Quick Start
 
-### 🐧 Linux / macOS
+### Linux / macOS
 
 **One command — paste and go:**
 
@@ -75,7 +76,7 @@ chmod +x run.sh && ./run.sh
 
 ---
 
-### 🪟 Windows (CMD / PowerShell)
+### Windows (CMD / PowerShell)
 
 **One command — paste in CMD or PowerShell:**
 
@@ -100,6 +101,8 @@ Both scripts automatically:
 3. **Install** all dependencies from `requirements.txt`
 4. **Check** timezone data (`tzdata`) is available
 5. **Launch** the TaskFlow Pro dashboard
+
+**What makes the setup scripts different:** While pip is installing dependencies, the terminal shows a smooth spinner with rotating productivity tips — so the wait feels useful rather than blank. Tips cycle every 3 seconds; a new one appears automatically until setup is done.
 
 On first launch you'll see the Rich dashboard with a live AI motivation/roast message. All tasks are stored locally in `tasks.db` — cloud sync happens silently in the background.
 
@@ -223,9 +226,9 @@ taskflow list                         → List all active tasks
 taskflow list --status pending        → Filter: pending | completed
 taskflow list --category Work         → Filter by category
 taskflow list --priority High         → Filter: High | Medium | Low
-taskflow complete <ID>                → Mark task as done ✓
+taskflow complete <ID>                → Mark task as done
 taskflow complete                     → Pick from pending list interactively
-taskflow delete <ID>                  → Soft-delete → recycle bin
+taskflow delete <ID>                  → Soft-delete to recycle bin
 taskflow delete                       → Pick from list interactively
 taskflow restore <ID>                 → Restore from recycle bin
 taskflow restore                      → Pick from bin interactively
@@ -241,14 +244,23 @@ taskflow weather "Shimla"             → Set your city and show weather
 When adding or editing a task you will be offered:
 
 - **Due time** — set `HH:MM` alongside the due date for time-specific tasks
-- **Reminder** — set a `YYYY-MM-DD HH:MM` reminder that fires in the terminal while `taskflow chat` is open
+- **Reminder** — set a `YYYY-MM-DD HH:MM` reminder; the daemon fires a notification in your terminal
 - **Recurrence** — `daily`, `weekly`, `weekdays`, or `monthly`; optionally set an end date
+
+**Where reminders fire:** The reminder daemon (30-second polling loop) is active during:
+
+| Session | Reminders active? |
+|---|---|
+| `taskflow` (dashboard open) | Yes |
+| `taskflow chat` | Yes |
+| `taskflow focus <ID>` | Yes |
+| `taskflow add / list / complete` | No — these exit immediately |
 
 > Reminders are validated — the app refuses to save a past reminder time and warns if the reminder is set after the task's due time.
 
 ### AI Chat (`taskflow chat`)
 
-Start a natural-language session where you can manage tasks by just talking. Supports English, Hindi, and Hinglish — AI matches your language automatically.
+Start a natural-language session where you can manage tasks by just talking. Supports English, Hindi, Hinglish, and other languages — AI matches your language automatically.
 
 **What happens behind the scenes every time you send a message:**
 
@@ -289,13 +301,11 @@ Step 5 — Action Dispatch       Execute the action (save task, mark done, etc.)
 5. All 4 mandatory fields ready (name, priority, due_date, category) → AI shows a **preview card**, asks you to confirm before saving
 6. You confirm → task saved, draft cleared
 
-**Reminder daemon in chat:** While `taskflow chat` is running, a background thread checks every 30 seconds for due reminders. When a reminder fires, a bold  notification prints directly in your terminal — no external notification system needed.
-
 ### AI-Powered Commands
 
 ```
-taskflow optimize                     → Full AI time-blocked daily schedule
-taskflow focus <ID>                   → 25-minute Pomodoro timer
+taskflow optimize                     → Interactive AI schedule optimizer (questions + 3 variants + edit)
+taskflow focus <ID>                   → 25-minute Pomodoro timer (reminder daemon active)
 taskflow focus <ID> --minutes 50      → Custom duration
 ```
 
@@ -332,9 +342,13 @@ Every AI response goes through a two-stage validation before being shown to you:
 
 If validation fails, the pipeline automatically retries up to 2 times with a brief delay. The judge is skipped for intents where a short reply is expected (list, analytics, complete) to avoid false positives.
 
+### Thinking-Leak Scrubber
+
+The AI models occasionally leak internal chain-of-thought content (`{"type":"reasoning","content":"..."}` blocks, SSE fragments, XML `<thinking>` tags) into the text reply. The scrubber runs on every response and strips all known formats before the reply reaches the validator or the user.
+
 ### Animated Thinking Display
 
-While any AI call is running, a live spinner shows **intent-aware progress messages** — different messages for create_task vs optimize vs analytics vs chitchat, cycling every ~1.5 seconds. After 3 seconds an elapsed-time counter also appears so you always know the AI is actively working.
+While any AI call is running, a live spinner shows **intent-aware progress messages** — different messages for `create_task` vs `optimize` vs `analytics` vs `chitchat`, cycling every ~1.5 seconds. After 3 seconds an elapsed-time counter also appears so you always know the AI is actively working.
 
 ### Natural Language Task Parsing (`taskflow add --ai`)
 
@@ -365,24 +379,33 @@ The classifier uses a **language-agnostic rulebook** — not keyword lists. It u
 - _"pani kab pina chahiye"_ → `general_question` (health tip, not a task search)
 - _"schedule banao"_ → `optimize`
 
-### AI Schedule Optimizer
+### Interactive Schedule Optimizer
 
 ```bash
 taskflow optimize
 ```
 
-Sends all pending tasks to the AI, which returns a complete time-blocked daily schedule:
-- Priority ordering — High first
-- Pomodoro 25-min blocks with 15-min breaks every 90 minutes
-- Category grouping to minimize context switching
-- Realistic 9AM–9PM window
+A fully guided, multi-variant schedule builder — not a one-shot dump. The flow:
+
+**Step 1 — Questions** (plain English prompts):
+- What is your focus goal? (Deep Work / Balanced / Quick Wins / Health First)
+- Time window? (start time → end time)
+- Any hard deadline task today? (pick from your task list)
+
+**Step 2 — Parallel generation:** Three AI calls run simultaneously, each using a different scheduling mode. Total wait is roughly the same as one call.
+
+**Step 3 — Choose:** All three variants are shown as numbered panels. You pick 1, 2, or 3.
+
+**Step 4 — Edit:** Optionally open the chosen schedule in your system text editor (`notepad` on Windows, `$EDITOR` / `nano` on Linux/macOS) to make manual tweaks.
+
+**Step 5 — Save:** Optionally write the final schedule to `schedule_YYYY-MM-DD.txt`.
 
 ### Daily Motivation / Roast
 
 Every dashboard open (`taskflow`) fetches a **personalized AI message** based on your stats:
-- **Productivity < 30%** → savage roast 
-- **Productivity ≥ 70%** → fired-up praise 
-- **Streak ≥ 3 days** → streak acknowledgement with  badge
+- **Productivity < 30%** → savage roast
+- **Productivity >= 70%** → fired-up praise
+- **Streak >= 3 days** → streak acknowledgement
 
 Fetched asynchronously — never delays dashboard load.
 
@@ -391,41 +414,44 @@ Fetched asynchronously — never delays dashboard load.
 ## Architecture
 
 ```
-┌────────────────────────────────────────────────────────────────┐
-│                    main.py (CLI + Rich UI)                      │
-│  Commands: add, list, complete, delete, restore, bin,           │
-│            weather, focus, optimize, analytics, export, chat    │
-│  Animated Thinking Display  |  Reminder Daemon (chat mode)      │
-└──────────────────────────────┬─────────────────────────────────┘
-                               │
-                    ┌──────────▼──────────┐
-                    │    controller.py     │
-                    │  Business logic,     │
-                    │  intent routing,     │
-                    │  action dispatch     │
-                    └──────┬──────────────┘
-                           │
-            ┌──────────────┼──────────────────────┐
-            │              │                       │
-  ┌─────────▼──────┐  ┌────▼──────────────────┐   │
-  │  database.py   │  │     ai_gateway.py      │   │
-  │                │  │                        │   │
-  │  SQLite ──── ◄─┘  │  Prompt Enhancer       │   │
-  │  (primary,        │  Decomposer            │   │
-  │   0ms, offline)   │  Intent Classifier     │   │
-  │                   │  Main Chat (R1/R2)     │   │
-  │  Supabase ◄────── │  Response Validator    │   │
-  │  (background      │  + AI Judge            │   │
-  │   sync thread)    │  Schedule Optimizer    │   │
-  └────────────────┘  │  Motivation Engine     │   │
-                       └────────────┬──────────┘   │
-                                    │               │
-                    ┌───────────────▼───────────────▼──────┐
-                    │        timezone_utils.py              │
-                    │  IP-based timezone detection,         │
-                    │  in-memory + file cache (7-day),      │
-                    │  powers all date/time comparisons     │
-                    └──────────────────────────────────────┘
++----------------------------------------------------------------+
+|                    main.py (CLI + Rich UI)                     |
+|  Commands: add, list, complete, delete, restore, bin,          |
+|            weather, focus, optimize, analytics, export, chat   |
+|  Animated Thinking Display  |  Reminder Daemon                 |
+|  (dashboard + chat + focus)                                    |
++------------------------------+---------------------------------+
+                               |
+                    +----------v----------+
+                    |    controller.py    |
+                    |  Business logic,    |
+                    |  intent routing,    |
+                    |  action dispatch,   |
+                    |  schedule variants  |
+                    +------+-------------+
+                           |
+            +--------------+-----------------------+
+            |              |                       |
+  +---------v------+  +----v--------------------+  |
+  |  database.py   |  |     ai_gateway.py       |  |
+  |                |  |                         |  |
+  |  SQLite        |  |  Prompt Enhancer        |  |
+  |  (primary,     |  |  Decomposer             |  |
+  |   0ms, offline)|  |  Intent Classifier      |  |
+  |                |  |  Main Chat              |  |
+  |  Supabase      |  |  Response Validator     |  |
+  |  (background   |  |  + AI Judge             |  |
+  |   sync thread) |  |  Thinking-Leak Scrubber |  |
+  +----------------+  |  Schedule Variants (x3) |  |
+                       |  Motivation Engine      |  |
+                       +-------------+-----------+  |
+                                     |              |
+                    +----------------v--------------v---+
+                    |          timezone_utils.py        |
+                    |  IP-based timezone detection,     |
+                    |  in-memory + file cache (7-day),  |
+                    |  powers all date/time comparisons |
+                    +-----------------------------------+
 
                     DevNest Proxy Server (Render — already deployed)
                     HTTPS + token-verified | All API keys server-side
@@ -441,7 +467,7 @@ Fetched asynchronously — never delays dashboard load.
 | Decomposer | Splits compound requests into ordered sub-tasks |
 | AI Judge | Scores reply quality 0–10; triggers retry if below threshold |
 | Main Chat | Generates reply + structured action with full context |
-| Schedule Optimizer | Heavy reasoning — builds complete time-blocked daily plan |
+| Schedule Variant (x3) | Parallel calls — Deep Work / Balanced / Quick Wins modes |
 | Motivation | Generates personalized productivity brief on dashboard |
 
 All calls route through the **DevNest proxy** — model selection is handled server-side.
@@ -518,7 +544,7 @@ This means TaskFlow works correctly for users in any timezone without any manual
 - [x] Filter tasks by status, priority, or category
 - [x] Category-based task organization
 - [x] Due time support (`HH:MM`) on top of due date
-- [x] **Reminder system** — set `YYYY-MM-DD HH:MM` reminders; daemon fires  bell in terminal
+- [x] **Reminder system** — set `YYYY-MM-DD HH:MM` reminders; daemon fires notification in terminal during dashboard, chat, and focus sessions
 - [x] **Recurrence engine** — daily / weekly / weekdays / monthly with optional end date
 - [x] **Soft delete + Recycle bin** — `taskflow bin`, `taskflow restore <ID>`
 - [x] **Weather widget** — dashboard + `taskflow weather` command; IP-auto-detects city
@@ -528,10 +554,10 @@ This means TaskFlow works correctly for users in any timezone without any manual
 - [x] **Multi-agent Decomposer** — splits compound prompts into ordered sub-tasks
 - [x] **Multilingual Intent Classifier** — language-agnostic rulebook (EN/HI/Hinglish/etc.)
 - [x] **AI Response Validator** — fast rules + AI judge with auto-retry (up to 2x)
-- [x] **Thinking-leak scrubber** — strips raw SSE reasoning fragments from replies
+- [x] **Thinking-leak scrubber** — strips `{"type":"reasoning"}` blocks, SSE fragments, and XML thinking tags from AI replies
 - [x] **Animated thinking display** — intent-aware cycling messages + elapsed timer
 - [x] AI natural language task parsing (`taskflow add --ai`)
-- [x] AI full-day schedule optimizer (`taskflow optimize`)
+- [x] **Interactive schedule optimizer** — questions → 3 parallel AI variants → pick → edit in terminal → save to file
 - [x] AI daily motivation / productivity roast on dashboard
 - [x] AI Chat mode with slash commands (`/add`, `/list`, `/done`, `/stats`, etc.)
 - [x] Chat draft memory — AI remembers partial task across topic switches
@@ -540,10 +566,10 @@ This means TaskFlow works correctly for users in any timezone without any manual
 - [x] Reminder validation (blocks past times; warns if reminder is after due time)
 - [x] Background Supabase cloud sync (non-blocking, zero client secrets)
 - [x] ASCII productivity analytics with bar charts
-- [x] Streak tracking with badge
+- [x] Streak tracking
 - [x] Pomodoro focus timer with live Rich countdown display
 - [x] Markdown report export
-- [x] One-command setup scripts — `run.sh` (Linux/macOS) + `run.bat` (Windows)
+- [x] **Setup scripts with live tips** — `run.sh` and `run.bat` show rotating productivity tips while pip installs dependencies
 - [x] Evaluation time-bomb — app auto-locks after **20 May 2026**
 
 ---
@@ -551,15 +577,15 @@ This means TaskFlow works correctly for users in any timezone without any manual
 ## Dependencies
 
 ```
-rich>=13.7.0       — Terminal UI (tables, panels, live spinner, Pomodoro timer)
-click>=8.1.7       — CLI framework (commands, options, arguments)
-requests>=2.31.0   — HTTP client for AI proxy calls + Supabase REST sync + IP detection
+rich>=13.7.0         — Terminal UI (tables, panels, live spinner, Pomodoro timer)
+click>=8.1.7         — CLI framework (commands, options, arguments)
+requests>=2.31.0     — HTTP client for AI proxy calls + Supabase REST sync + IP detection
 python-dotenv>=1.0.0 — Env var support (optional DB_PATH override)
-tzdata>=2024.1     — IANA timezone database (required on Windows; auto-installed by run.bat)
+tzdata>=2024.1       — IANA timezone database (required on Windows; auto-installed by run.bat)
 ```
 
 **Standard library only** (no extra install needed) for:
-`sqlite3`, `threading`, `uuid`, `datetime`, `json`, `os`, `time`, `zoneinfo`, `re`
+`sqlite3`, `threading`, `uuid`, `datetime`, `json`, `os`, `time`, `zoneinfo`, `re`, `tempfile`
 
 Install everything at once:
 
@@ -573,18 +599,18 @@ pip install -r requirements.txt
 
 ```
 taskflow-pro/
-├── main.py                 ← CLI entry point (Rich UI, Click commands, animated thinking, Pomodoro)
-├── controller.py           ← Business logic + AI orchestration + action dispatch
-├── database.py             ← SQLite CRUD + reminder daemon queries + Supabase sync thread
-├── ai_gateway.py           ← Multi-agent AI: enhancer, decomposer, classifier, chat, validator
-├── timezone_utils.py       ← IP-based timezone detection + caching (powers all date/time ops)
-├── requirements.txt        ← Python dependencies
-├── run.sh                  ← One-command setup + launch (Linux / macOS)
-├── run.bat                 ← One-command setup + launch (Windows, handles tzdata install)
-├── taskflow                ← Short command wrapper (Linux / macOS)
-├── taskflow.bat            ← Short command wrapper (Windows CMD)
-├── supabase_setup.sql      ← Run once in Supabase SQL Editor (includes all new columns)
-├── tasks.db                ← SQLite database (auto-created, git-ignored)
+├── main.py                 <- CLI entry point (Rich UI, Click commands, animated thinking, Pomodoro)
+├── controller.py           <- Business logic + AI orchestration + action dispatch + schedule variants
+├── database.py             <- SQLite CRUD + reminder daemon queries + Supabase sync thread
+├── ai_gateway.py           <- Multi-agent AI: enhancer, decomposer, classifier, chat, validator, variants
+├── timezone_utils.py       <- IP-based timezone detection + caching (powers all date/time ops)
+├── requirements.txt        <- Python dependencies
+├── run.sh                  <- One-command setup + launch (Linux / macOS) — tips spinner during install
+├── run.bat                 <- One-command setup + launch (Windows) — tips spinner during install
+├── taskflow                <- Short command wrapper (Linux / macOS)
+├── taskflow.bat            <- Short command wrapper (Windows CMD)
+├── supabase_setup.sql      <- Run once in Supabase SQL Editor (includes all new columns)
+├── tasks.db                <- SQLite database (auto-created, git-ignored)
 └── README.md
 ```
 
@@ -597,30 +623,30 @@ taskflow-pro/
 | Item | Details |
 |---|---|
 | **GitHub** | Push all files except `tasks.db` — add it to `.gitignore`. No `.env` to worry about |
-| **Demo Video** | Show: dashboard open, `add --ai`, `chat` (multilingual), `optimize`, `focus`, `analytics`, `weather`, and `export` |
+| **Demo Video** | Show: dashboard, `add --ai`, `chat` (multilingual), `optimize` (full interactive flow), `focus`, `analytics`, `weather`, `export` |
 | **Deployment** | App runs locally — the DevNest proxy is already live on Render |
 
 ### Demo Script (suggested order)
 
 ```bash
-taskflow                               # 1. Dashboard + weather + AI brief
+taskflow                               # 1. Dashboard + weather + AI brief + reminder daemon starts
 taskflow weather "Shimla"              # 2. Set city (only needed once)
 taskflow add                           # 3. Manual add — show reminder + recurrence prompts
 taskflow add --ai                      # 4. Natural language add
 taskflow chat                          # 5. Open AI chat (multilingual demo)
-  "add karo gym task kal ke liye"      #    Create task in Hinglish — shows multi-agent pipeline
-  "pani pi liya"                       #    Complete by describing action — shows intent understanding
+  "add karo gym task kal ke liye"      #    Create task in Hinglish — multi-agent pipeline
+  "pani pi liya"                       #    Complete by describing action — intent understanding
   /stats                               #    Slash command analytics
   /exit
-taskflow optimize                      # 6. Generate AI schedule
-taskflow focus <ID>                    # 7. Pomodoro timer
+taskflow optimize                      # 6. Interactive optimizer — answer questions, pick from 3 variants
+taskflow focus                     # 7. Pomodoro timer (reminder daemon active here too)
 taskflow analytics                     # 8. ASCII charts
 taskflow bin                           # 9. View recycle bin
-taskflow restore <ID>                  # 10. Restore a task
+taskflow restore                   # 10. Restore a task
 taskflow export                        # 11. Export report
 ```
 
 ---
 
 > Built for **DevNest Python Developer Internship — Week 1**
-> Proxy server managed by Scam Buster India  — already deployed and running.
+> Proxy server managed by Scam Buster India (scambusterindia.sbs) — already deployed and running.
