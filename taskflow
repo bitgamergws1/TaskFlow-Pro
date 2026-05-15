@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+
 # taskflow — makes "taskflow <command>" work from terminal
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 python3 "$DIR/main.py" "$@"
