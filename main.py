@@ -460,6 +460,7 @@ def _show_dashboard():
     import threading as _t
     from ai_gateway import AIGateway as _AIGateway
     _t.Thread(target=_AIGateway.wake_up, daemon=True).start()
+    _t.Thread(target=_reminder_daemon, args=(ctrl, console), daemon=True).start()
 
     weather_result = [None]
     def _weather_thread():
@@ -1459,26 +1460,128 @@ def chat():
 
 @cli.command()
 def optimize():
-    """AI-powered full-day schedule optimizer."""
+    """Interactive AI schedule optimizer — asks questions, generates 3 variants, lets you edit."""
     ctrl = _get_ctrl()
+
+    pending = ctrl.list_tasks(status="pending")
+    if not pending:
+        console.print("  [dim]No pending tasks to optimize.[/dim]")
+        return
+
     console.print(Panel(
-        "[dim]Analyzing your pending tasks...[/dim]\n[dim]This may take 20-40 seconds.[/dim]",
+        f"[bold white]Schedule Optimizer[/bold white]\n"
+        f"[dim]{len(pending)} pending task(s) found. Answer a few questions first.[/dim]",
         border_style="dim",
+        padding=(0, 2),
     ))
-    with console.status("[dim]Building schedule...[/dim]", spinner="dots"):
-        schedule, err = ctrl.optimize_schedule()
-    if err:
-        console.print(f"  [red]Error:[/red] {err}")
+    console.print()
+
+    # Step 1: Questions
+    _goal_map = {
+        "1": ("deep_work",    "Deep Work     — max focus, hardest tasks first"),
+        "2": ("balanced",     "Balanced      — mix of deep work + admin"),
+        "3": ("quick_wins",   "Quick Wins    — short tasks first, build momentum"),
+        "4": ("health_first", "Health First  — fitness/wellness tasks early"),
+    }
+    console.print("  [white]What is your focus goal for today?[/white]")
+    for k, (_, label) in _goal_map.items():
+        console.print(f"    [dim]{k}.[/dim] {label}")
+    goal_choice = Prompt.ask("  Choice", choices=list(_goal_map.keys()), default="2")
+    goal = _goal_map[goal_choice][0]
+
+    start_time = Prompt.ask("  [white]Start time (HH:MM)[/white]", default="09:00").strip()
+    end_time   = Prompt.ask("  [white]End time   (HH:MM)[/white]", default="18:00").strip()
+
+    console.print()
+    console.print(_task_table(pending, f"Pending Tasks ({len(pending)})"))
+    deadline_raw = Prompt.ask(
+        "  [white]Any hard deadline today? (Task ID or Enter to skip)[/white]", default=""
+    ).strip().upper()
+
+    deadline_task = None
+    if deadline_raw:
+        t, _ = ctrl.get_task(deadline_raw)
+        if t:
+            deadline_task = t
+            console.print(f"  [dim]Deadline pinned: [white]{t['name']}[/white][/dim]")
+        else:
+            console.print(f"  [yellow]Task {deadline_raw} not found — skipping deadline pin.[/yellow]")
+
+    # Step 2: Generate 3 variants in parallel
+    console.print()
+    VARIANT_LABELS = ["Deep Work Mode", "Balanced Mode", "Quick Wins Mode"]
+
+    with console.status("[dim]Generating 3 schedule variants in parallel...[/dim]", spinner="dots"):
+        variants = ctrl.generate_schedule_variants(goal, start_time, end_time, deadline_task)
+
+    if not variants:
+        console.print("  [red]Could not generate schedules. Check your tasks and try again.[/red]")
         return
-    if not schedule:
-        console.print("  [dim]No schedule generated. Try again.[/dim]")
+
+    valid = [(name, sched) for name, sched, err in variants if sched and not err]
+    if not valid:
+        console.print("  [red]All variants failed. Try again in a moment.[/red]")
         return
+
+    # Step 3: Show all variants numbered
+    console.print()
+    for idx, (name, sched) in enumerate(valid):
+        console.print(Panel(
+            sched,
+            title=f"[bold white][{idx + 1}] {name}[/bold white]",
+            border_style="dim",
+            padding=(1, 2),
+        ))
+        console.print()
+
+    # Step 4: User picks
+    choices = [str(i + 1) for i in range(len(valid))]
+    choice = Prompt.ask(
+        f"  [white]Which schedule do you want? ({'/'.join(choices)})[/white]",
+        choices=choices,
+        default="1",
+    )
+    chosen_name, chosen_sched = valid[int(choice) - 1]
+
+    # Step 5: Edit in terminal if wanted
+    if Confirm.ask("  Open in text editor to make changes?", default=False):
+        import tempfile
+        editor = os.environ.get(
+            "EDITOR",
+            "notepad" if sys.platform == "win32" else "nano",
+        )
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".txt", delete=False, encoding="utf-8"
+        ) as tmp:
+            tmp.write(chosen_sched)
+            tmp_path = tmp.name
+        os.system(f'"{editor}" "{tmp_path}"')
+        try:
+            with open(tmp_path, encoding="utf-8") as f:
+                chosen_sched = f.read().strip()
+        except Exception:
+            console.print("  [yellow]Could not read edited file — using original.[/yellow]")
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                return  # cleanup failure is non-critical
+
+    # Step 6: Final display
+    console.print()
     console.print(Panel(
-        schedule,
-        title="[bold white]AI Schedule[/bold white]",
+        chosen_sched,
+        title=f"[bold white]Your Schedule — {chosen_name}[/bold white]",
         border_style="dim",
         padding=(1, 2),
     ))
+
+    # Step 7: Optionally save to file
+    if Confirm.ask("  Save to file?", default=False):
+        fn = f"schedule_{date.today().isoformat()}.txt"
+        with open(fn, "w", encoding="utf-8") as f:
+            f.write(chosen_sched)
+        console.print(f"  [dim]Saved: [white]{fn}[/white][/dim]")
 
 
 # focus
@@ -1496,6 +1599,8 @@ def focus(task_id, minutes):
     if task["status"] == "completed":
         console.print("  [dim]Task already completed.[/dim]")
         return
+
+    threading.Thread(target=_reminder_daemon, args=(ctrl, console), daemon=True).start()
 
     total = minutes * 60
     console.print(Panel(
