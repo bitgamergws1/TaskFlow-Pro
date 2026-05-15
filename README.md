@@ -32,7 +32,7 @@ TaskFlow Pro is a fully offline-capable, AI-augmented terminal task manager buil
 - **SQLite** as the primary database — zero latency, works with no internet
 - **Supabase** for background cloud sync — your tasks follow you across devices
 - **Multi-agent AI pipeline** for natural-language task parsing, validation, and scheduling
-- **Intelligent reminder daemon** — background thread fires notifications in the terminal during `dashboard`, `chat`, and `focus` sessions
+- **Intelligent reminder daemon** — `reminder_worker.py` spawns as a detached background process on first run; fires **Windows toast notifications** even after the CLI exits — no second terminal needed
 - **Recurrence engine** — repeating tasks (daily, weekly, weekdays, monthly)
 - **Interactive schedule optimizer** — asks questions, generates 3 parallel AI variants, lets you pick and edit
 - A **Render-hosted proxy server** that keeps all API keys off your machine entirely
@@ -46,6 +46,7 @@ The app is designed to require **no secrets on the client machine**. You clone i
 | File | Role |
 |---|---|
 | `main.py` | CLI entry point — all commands, Rich UI, Pomodoro timer, animated AI thinking display |
+| `reminder_worker.py` | Detached background process — polls DB every 10s, fires Windows toast notifications for due reminders even after CLI exits |
 | `controller.py` | Logic bridge between database and AI — routes intents to actions, parallel schedule generation |
 | `database.py` | SQLite engine + background Supabase sync + reminder daemon queries |
 | `ai_gateway.py` | Multi-model AI routing, multi-agent decomposition, response validator, prompt enhancer, schedule variants |
@@ -244,19 +245,19 @@ taskflow weather "Shimla"             → Set your city and show weather
 When adding or editing a task you will be offered:
 
 - **Due time** — set `HH:MM` alongside the due date for time-specific tasks
-- **Reminder** — set a `YYYY-MM-DD HH:MM` reminder; the daemon fires a notification in your terminal
+- **Reminder** — set a `YYYY-MM-DD HH:MM` reminder; fires as a **Windows toast notification** via the background worker
 - **Recurrence** — `daily`, `weekly`, `weekdays`, or `monthly`; optionally set an end date
 
-**Where reminders fire:** The reminder daemon (30-second polling loop) is active during:
+**How reminders work:** On the first `taskflow` command of the day, `main.py` spawns `reminder_worker.py` as a **detached background process** (hidden window, no terminal). It polls the SQLite DB every 10 seconds and fires a toast notification for any due reminder — whether the CLI is open or closed.
 
 | Session | Reminders active? |
 |---|---|
-| `taskflow` (dashboard open) | Yes |
-| `taskflow chat` | Yes |
-| `taskflow focus <ID>` | Yes |
-| `taskflow add / list / complete` | No — these exit immediately |
+| Any `taskflow` command (first run) | Spawns worker ✅ |
+| CLI exits after `taskflow edit` | Worker keeps running ✅ |
+| Worker already running | No duplicate spawned ✅ |
+| Machine restart | Re-spawned on next `taskflow` command ✅ |
 
-> Reminders are validated — the app refuses to save a past reminder time and warns if the reminder is set after the task's due time.
+> Reminders are validated on save — the app refuses to save a past reminder time and warns if the reminder is set after the task's due time.
 
 ### AI Chat (`taskflow chat`)
 
@@ -435,8 +436,8 @@ Fetched asynchronously — never delays dashboard load.
 |                    main.py (CLI + Rich UI)                     |
 |  Commands: add, list, complete, delete, restore, bin,          |
 |            weather, focus, optimize, analytics, export, chat   |
-|  Animated Thinking Display  |  Reminder Daemon                 |
-|  (dashboard + chat + focus)                                    |
+|  Animated Thinking Display  |  _ensure_reminder_worker()       |
+|                             |  (spawns worker on first run)    |
 +------------------------------+---------------------------------+
                                |
                     +----------v----------+
@@ -469,6 +470,15 @@ Fetched asynchronously — never delays dashboard load.
                     |  in-memory + file cache (7-day),  |
                     |  powers all date/time comparisons |
                     +-----------------------------------+
+
+  +----------------------------------------------------------+
+  |             reminder_worker.py (detached process)        |
+  |  Spawned by main.py on first taskflow command            |
+  |  Runs silently in background — survives CLI exit         |
+  |  Polls SQLite every 10s → fires Windows toast via plyer  |
+  |  PID file: ~/.taskflow_reminder.pid                      |
+  |  Log file: ~/.taskflow_reminder.log                      |
+  +----------------------------------------------------------+
 
                     DevNest Proxy Server (Render — already deployed)
                     HTTPS + token-verified | All API keys server-side
@@ -561,7 +571,9 @@ This means TaskFlow works correctly for users in any timezone without any manual
 - [x] Filter tasks by status, priority, or category
 - [x] Category-based task organization
 - [x] Due time support (`HH:MM`) on top of due date
-- [x] **Reminder system** — set `YYYY-MM-DD HH:MM` reminders; daemon fires notification in terminal during dashboard, chat, and focus sessions
+- [x] **Reminder system** — set `YYYY-MM-DD HH:MM` reminders; `reminder_worker.py` fires **Windows toast notifications** (via `plyer`) as a detached background process — works even after CLI exits, no second terminal needed
+- [x] **Reminder worker auto-spawn** — `main.py` detects if worker is already running (PID file check) and spawns it only once per boot; worker polls DB every 10s
+- [x] **Reminder timezone fix** — datetime comparison in `edit` command is now timezone-aware (matches `now_local()` correctly)
 - [x] **Recurrence engine** — daily / weekly / weekdays / monthly with optional end date
 - [x] **Soft delete + Recycle bin** — `taskflow bin`, `taskflow restore <ID>`
 - [x] **Weather widget** — dashboard + `taskflow weather` command; IP-auto-detects city
@@ -602,6 +614,7 @@ click>=8.1.7         — CLI framework (commands, options, arguments)
 requests>=2.31.0     — HTTP client for AI proxy calls + Supabase REST sync + IP detection
 python-dotenv>=1.0.0 — Env var support (optional DB_PATH override)
 tzdata>=2024.1       — IANA timezone database (required on Windows; auto-installed by run.bat)
+plyer>=2.1.0         — Cross-platform desktop notifications (Windows toast reminders)
 ```
 
 **Standard library only** (no extra install needed) for:
@@ -620,6 +633,7 @@ pip install -r requirements.txt
 ```
 taskflow-pro/
 ├── main.py                 <- CLI entry point (Rich UI, Click commands, animated thinking, Pomodoro)
+├── reminder_worker.py      <- Detached background process — toast notifications, 10s DB polling, PID file
 ├── controller.py           <- Business logic + AI orchestration + action dispatch + schedule variants
 ├── database.py             <- SQLite CRUD + reminder daemon queries + Supabase sync thread
 ├── ai_gateway.py           <- Multi-agent AI: enhancer, decomposer, classifier, chat, validator, variants
@@ -649,7 +663,7 @@ taskflow-pro/
 ### Demo Script (suggested order)
 
 ```bash
-taskflow                               # 1. Dashboard + weather + AI brief + reminder daemon starts
+taskflow                               # 1. Dashboard + weather + AI brief + reminder worker auto-spawned
 taskflow weather "Shimla"              # 2. Set city (only needed once)
 taskflow add                           # 3. Manual add — show reminder + recurrence prompts
 taskflow add --ai                      # 4. Natural language add
