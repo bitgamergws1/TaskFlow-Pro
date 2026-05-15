@@ -301,6 +301,12 @@ Step 5 — Action Dispatch       Execute the action (save task, mark done, etc.)
 5. All 4 mandatory fields ready (name, priority, due_date, category) → AI shows a **preview card**, asks you to confirm before saving
 6. You confirm → task saved, draft cleared
 
+**Auto-fill behaviour:** If you say `"fill yourself"` / `"you decide"` / `"bas bana do"` at any point, the AI auto-fills all remaining fields using context (category inferred from task name, priority from urgency, reminder set 30 min before due time, notes auto-generated). It then shows the preview card immediately without asking more questions.
+
+**Reminder auto-set:** When a task has a `due_time`, the AI automatically sets `reminder_at` to 30 minutes before the due time — even if you did not explicitly ask for a reminder.
+
+**No repeated questions:** The AI checks the draft before asking anything. If priority or category is already captured, it will never ask for it again in the same conversation.
+
 ### AI-Powered Commands
 
 ```
@@ -372,12 +378,14 @@ Supports extraction of: name, priority, category, due_date, due_time, reminder_a
 
 ### Multilingual Intent Understanding
 
-The classifier uses a **language-agnostic rulebook** — not keyword lists. It understands meaning across English, Hindi, Hinglish, and other languages:
+The classifier uses a **language-agnostic rulebook** — not keyword lists. It understands meaning across English, Hindi, Hinglish, Tamil, Spanish, and other languages:
 
 - _"pani pi liya"_ → `complete_task` (matched to "Drink water" pending task)
 - _"ab kya karna hai?"_ → `list_tasks` (user asking what's next)
 - _"pani kab pina chahiye"_ → `general_question` (health tip, not a task search)
 - _"schedule banao"_ → `optimize`
+
+**Strict language matching:** The AI detects the language of the *current* message — not the conversation history — and replies in that exact language. English message → English reply, even if the previous 10 messages were in Hindi. One-word replies ("yes", "ok", "haan") match the previous user turn's language.
 
 ### Interactive Schedule Optimizer
 
@@ -385,20 +393,29 @@ The classifier uses a **language-agnostic rulebook** — not keyword lists. It u
 taskflow optimize
 ```
 
-A fully guided, multi-variant schedule builder — not a one-shot dump. The flow:
+A fully guided, multi-variant schedule builder — not a one-shot dump.
 
-**Step 1 — Questions** (plain English prompts):
+**When to use it:** Works best with 3+ pending tasks and a full-day window (e.g. 09:00 → 18:00). With only 1 task or a very short window, the AI will warn you and ask to confirm before proceeding.
+
+**The flow:**
+
+**Step 1 — Questions:**
 - What is your focus goal? (Deep Work / Balanced / Quick Wins / Health First)
-- Time window? (start time → end time)
-- Any hard deadline task today? (pick from your task list)
+- Start and end time — accepts `now` / `abhi` for current time; `24:00` is automatically capped to `23:59`
+- Any hard deadline task today? — enter a Task ID, or press Enter / type `no` to skip
 
-**Step 2 — Parallel generation:** Three AI calls run simultaneously, each using a different scheduling mode. Total wait is roughly the same as one call.
+**Step 2 — Validations (automatic):**
+- Less than 30-minute window → warning shown, confirm to proceed
+- Only 1 task → warning shown, confirm to proceed
+- Invalid time format → defaults to `09:00` / `18:00` with a notice
 
-**Step 3 — Choose:** All three variants are shown as numbered panels. You pick 1, 2, or 3.
+**Step 3 — Parallel generation:** Three AI calls run simultaneously, each using a different scheduling mode. Total wait is roughly the same as one call.
 
-**Step 4 — Edit:** Optionally open the chosen schedule in your system text editor (`notepad` on Windows, `$EDITOR` / `nano` on Linux/macOS) to make manual tweaks.
+**Step 4 — Choose:** All three variants are shown as numbered panels. You pick 1, 2, or 3.
 
-**Step 5 — Save:** Optionally write the final schedule to `schedule_YYYY-MM-DD.txt`.
+**Step 5 — Edit:** Optionally open the chosen schedule in your system text editor (`notepad` on Windows, `$EDITOR` / `nano` on Linux/macOS) to make manual tweaks.
+
+**Step 6 — Save:** Optionally write the final schedule to `schedule_YYYY-MM-DD.txt`.
 
 ### Daily Motivation / Roast
 
@@ -557,10 +574,13 @@ This means TaskFlow works correctly for users in any timezone without any manual
 - [x] **Thinking-leak scrubber** — strips `{"type":"reasoning"}` blocks, SSE fragments, and XML thinking tags from AI replies
 - [x] **Animated thinking display** — intent-aware cycling messages + elapsed timer
 - [x] AI natural language task parsing (`taskflow add --ai`)
-- [x] **Interactive schedule optimizer** — questions → 3 parallel AI variants → pick → edit in terminal → save to file
+- [x] **Interactive schedule optimizer** — goal selection, smart time input (`now` keyword, `24:00` cap), window validation (30 min min), 1-task warning, 3 parallel AI variants, pick + edit in terminal + save to file
 - [x] AI daily motivation / productivity roast on dashboard
 - [x] AI Chat mode with slash commands (`/add`, `/list`, `/done`, `/stats`, etc.)
 - [x] Chat draft memory — AI remembers partial task across topic switches
+- [x] **Auto-fill** — say "fill yourself" and AI infers all remaining fields, auto-sets reminder, writes notes
+- [x] **Reminder auto-set** — when due_time is set, reminder_at is automatically calculated (due_time − 30 min)
+- [x] **Draft memory guard** — AI never re-asks fields already captured in current draft
 - [x] Task confirmation preview before saving (via chat)
 - [x] Past-date validation with user confirmation flow
 - [x] Reminder validation (blocks past times; warns if reminder is after due time)
@@ -639,14 +659,14 @@ taskflow chat                          # 5. Open AI chat (multilingual demo)
   /stats                               #    Slash command analytics
   /exit
 taskflow optimize                      # 6. Interactive optimizer — answer questions, pick from 3 variants
-taskflow focus                     # 7. Pomodoro timer (reminder daemon active here too)
+taskflow focus <ID>                    # 7. Pomodoro timer (reminder daemon active here too)
 taskflow analytics                     # 8. ASCII charts
 taskflow bin                           # 9. View recycle bin
-taskflow restore                   # 10. Restore a task
+taskflow restore <ID>                  # 10. Restore a task
 taskflow export                        # 11. Export report
 ```
 
 ---
 
 > Built for **DevNest Python Developer Internship — Week 1**
-> Proxy server managed by Scam Buster India (scambusterindia.sbs) — already deployed and running.
+> Proxy server managed by Scam Buster India  — already deployed and running.
