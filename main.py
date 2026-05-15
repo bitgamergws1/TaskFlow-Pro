@@ -250,34 +250,48 @@ def _live_thinking_call(fn, intent_name: str = "unclear"):
 
 
 BANNER = """
-  ╔══════════════════════════════════════════════════════════════════════════╗
-  ║  ████████╗ █████╗ ███████╗██╗  ██╗    ███████╗██╗      ██████╗ ██╗    ██╗ ║
-  ║     ██╔══╝██╔══██╗██╔════╝██║ ██╔╝    ██╔════╝██║     ██╔═══██╗██║    ██║ ║
-  ║     ██║   ███████║███████╗█████╔╝     █████╗  ██║     ██║   ██║██║ █╗ ██║ ║
-  ║     ██║   ██╔══██║╚════██║██╔═██╗     ██╔══╝  ██║     ██║   ██║██║███╗██║ ║
-  ║     ██║   ██║  ██║███████║██║  ██╗    ██║     ███████╗╚██████╔╝╚███╔███╔╝ ║
-  ║     ╚═╝   ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝   ╚═╝     ╚══════╝ ╚═════╝  ╚══╝╚══╝ ║
-  ║                        P R O  --  Cyber-Sync Edition                      ║
-  ╚══════════════════════════════════════════════════════════════════════════╝"""
+  ╔════════════════════════════════════════════════════════╗
+  ║                                                        ║
+  ║    ████████╗ █████╗ ███████╗██╗  ██╗                  ║
+  ║       ██╔══╝██╔══██╗██╔════╝██║ ██╔╝                  ║
+  ║       ██║   ███████║███████╗█████╔╝                   ║
+  ║       ██║   ██╔══██║╚════██║██╔═██╗                   ║
+  ║       ██║   ██║  ██║███████║██║  ██╗                  ║
+  ║       ╚═╝   ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝  P R O          ║
+  ║                                                        ║
+  ║    ███████╗██╗      ██████╗ ██╗    ██╗                 ║
+  ║    ██╔════╝██║     ██╔═══██╗██║    ██║                 ║
+  ║    █████╗  ██║     ██║   ██║██║ █╗ ██║                 ║
+  ║    ██╔══╝  ██║     ██║   ██║██║███╗██║                 ║
+  ║    ██║     ███████╗╚██████╔╝╚███╔███╔╝                 ║
+  ║    ╚═╝     ╚══════╝ ╚═════╝  ╚══╝╚══╝                  ║
+  ║                                                        ║
+  ║              Cyber-Sync Edition                        ║
+  ╚════════════════════════════════════════════════════════╝"""
 
 SLASH_HELP = """
-  [bold white]Slash Commands[/bold white]
-  [dim]──────────────────────────────────────────────[/dim]
+  [bold white]Task Actions[/bold white]
   [cyan]/add[/cyan]              Start guided task creation
-  [cyan]/list[/cyan]             Show all tasks
+  [cyan]/done <ID>[/cyan]        Mark task completed
+  [cyan]/del <ID>[/cyan]         Move task to recycle bin
+  [cyan]/search <query>[/cyan]   Search tasks
+
+  [bold white]View[/bold white]
+  [cyan]/list[/cyan]             All tasks
   [cyan]/list pending[/cyan]     Filter by status
   [cyan]/list Work[/cyan]        Filter by category
-  [cyan]/done <ID>[/cyan]        Mark task completed
-  [cyan]/del <ID>[/cyan]         Delete task
-  [cyan]/search <query>[/cyan]   Search tasks
+  [cyan]/stats[/cyan]            Analytics summary
+
+  [bold white]AI & Draft[/bold white]
   [cyan]/optimize[/cyan]         Generate AI schedule
-  [cyan]/stats[/cyan]            Show analytics
-  [cyan]/report[/cyan]           Export Markdown report
   [cyan]/draft[/cyan]            Show current task draft
   [cyan]/clear[/cyan]            Clear current draft
+
+  [bold white]Other[/bold white]
+  [cyan]/report[/cyan]           Export Markdown report
   [cyan]/help[/cyan]             Show this help
   [cyan]/exit[/cyan]             Leave chat
-  [dim]──────────────────────────────────────────────[/dim]
+
   [dim]Or just talk naturally — AI handles the rest.[/dim]
 """
 
@@ -364,11 +378,13 @@ def _task_table(tasks, title="Tasks"):
         return None
     table = Table(
         title=title,
-        box=box.SIMPLE_HEAVY,
+        box=box.MINIMAL_HEAVY_HEAD,
         border_style="dim",
-        header_style="bold white",
+        header_style="bold cyan",
         show_lines=False,
         title_style="bold white",
+        title_justify="left",
+        pad_edge=True,
     )
     table.add_column("ID",       style="dim",    width=10)
     table.add_column("Task",     style="white",  min_width=22)
@@ -437,16 +453,16 @@ def _render_task_card(t: dict, title="Task"):
     if t.get('reminder_sent'):
         remind_line += '  [dim](sent)[/dim]'
     console.print(Panel(
-        f"  [dim]ID[/dim]        [white]{t.get('id', '— not saved yet —')}[/white]\n"
-        f"  [dim]Name[/dim]      [bold white]{t['name']}[/bold white]\n"
-        f"  [dim]Priority[/dim]  [{p_style}]{t.get('priority','Medium')}[/{p_style}]\n"
-        f"  [dim]Category[/dim]  [white]{t.get('category','General')}[/white]\n"
-        f"  [dim]Due[/dim]       [white]{due_line}[/white]\n"
-        f"  [dim]Recurrence[/dim][white]{recur_line}[/white]\n"
-        f"  [dim]Reminder[/dim]  [cyan]{remind_line}[/cyan]\n"
-        f"  [dim]Notes[/dim]     [dim]{t.get('notes') or '--'}[/dim]",
+        f"  [dim]{'ID':<12}[/dim][white]{t.get('id', 'not saved yet')}[/white]\n"
+        f"  [dim]{'Name':<12}[/dim][bold white]{t['name']}[/bold white]\n"
+        f"  [dim]{'Priority':<12}[/dim][{p_style}]{t.get('priority','Medium')}[/{p_style}]\n"
+        f"  [dim]{'Category':<12}[/dim][white]{t.get('category','General')}[/white]\n"
+        f"  [dim]{'Due':<12}[/dim][white]{due_line}[/white]\n"
+        f"  [dim]{'Recurrence':<12}[/dim][white]{recur_line}[/white]\n"
+        f"  [dim]{'Reminder':<12}[/dim][cyan]{remind_line}[/cyan]\n"
+        f"  [dim]{'Notes':<12}[/dim][dim]{t.get('notes') or '--'}[/dim]",
         title=f"[bold white]{title}[/bold white]",
-        border_style="dim",
+        border_style="cyan",
         padding=(0, 2),
     ))
 
@@ -472,14 +488,14 @@ def _show_dashboard():
     tasks = ctrl.list_tasks()
 
     pc     = "green" if stats["productivity"] >= 70 else "yellow" if stats["productivity"] >= 40 else "red"
-    streak = f"  {stats['streak']}d" if stats["streak"] >= 3 else f"  {stats['streak']}d"
+    streak_label = f"{stats['streak']}d  streak" if stats["streak"] >= 3 else f"{stats['streak']}d  streak"
     stat_panels = [
-        Panel(f"[bold white]{stats['total']}[/bold white]\n[dim]Total[/dim]",                     border_style="dim", expand=True),
-        Panel(f"[bold green]{stats['completed']}[/bold green]\n[dim]Done[/dim]",                  border_style="dim", expand=True),
-        Panel(f"[bold yellow]{stats['pending']}[/bold yellow]\n[dim]Pending[/dim]",               border_style="dim", expand=True),
-        Panel(f"[bold red]{stats['overdue']}[/bold red]\n[dim]Overdue[/dim]",                     border_style="dim", expand=True),
-        Panel(f"[bold {pc}]{stats['productivity']}%[/bold {pc}]\n[dim]Done rate[/dim]",           border_style="dim", expand=True),
-        Panel(f"[bold white]{streak}[/bold white]\n[dim]Streak[/dim]",                            border_style="dim", expand=True),
+        Panel(f"[bold white]{stats['total']}[/bold white]\n[dim]Total tasks[/dim]",             border_style="white", expand=True),
+        Panel(f"[bold green]{stats['completed']}[/bold green]\n[dim]Completed[/dim]",           border_style="green", expand=True),
+        Panel(f"[bold yellow]{stats['pending']}[/bold yellow]\n[dim]Pending[/dim]",             border_style="yellow", expand=True),
+        Panel(f"[bold red]{stats['overdue']}[/bold red]\n[dim]Overdue[/dim]",                   border_style="red", expand=True),
+        Panel(f"[bold {pc}]{stats['productivity']}%[/bold {pc}]\n[dim]Done rate[/dim]",         border_style=pc, expand=True),
+        Panel(f"[bold cyan]{streak_label}[/bold cyan]\n[dim]Day streak[/dim]",                   border_style="cyan", expand=True),
     ]
     console.print(Columns(stat_panels))
 
@@ -487,11 +503,11 @@ def _show_dashboard():
     wx = weather_result[0]
     if wx:
         console.print(Panel(
-            f"  [bold white]{wx['city']}[/bold white]  "
-            f"[cyan]{wx['temp']}°C[/cyan]  "
-            f"[dim]feels {wx['feels']}°C  |  {wx['desc']}  |  humidity {wx['humidity']}%[/dim]",
+            f"  [bold cyan]{wx['temp']}°C[/bold cyan]"
+            f"  [white]{wx['desc']}[/white]"
+            f"  [dim]·  feels {wx['feels']}°C  ·  humidity {wx['humidity']}%[/dim]",
+            title=f"[dim]{wx['city']}[/dim]",
             border_style="dim",
-            title="[dim]Weather[/dim]",
             padding=(0, 1),
         ))
 
@@ -547,36 +563,102 @@ def _show_dashboard():
 
     if msg:
         console.print(Panel(
-            f"[italic white]{msg}[/italic white]",
-            title="[dim]TaskFlow AI[/dim]",
-            border_style="dim",
+            f"[white]{msg}[/white]",
+            title="[dim]Daily Brief[/dim]",
+            border_style="cyan",
             padding=(0, 2),
         ))
     elif mot_err:
         console.print(Panel(
-            f"[dim]Could not load daily brief — {mot_err}[/dim]",
-            title="[dim]TaskFlow AI[/dim]",
+            f"[dim]Daily brief unavailable — {mot_err}[/dim]",
+            title="[dim]Daily Brief[/dim]",
             border_style="dim",
             padding=(0, 2),
         ))
 
     console.print()
-    console.print(
-        "  [dim]Commands:[/dim]  "
-        "[white]add[/white]  [dim]|[/dim]  [white]list[/white]  [dim]|[/dim]  "
-        "[white]chat[/white]  [dim]|[/dim]  [white]complete[/white]  [dim]|[/dim]  "
-        "[white]optimize[/white]  [dim]|[/dim]  [white]focus[/white]  [dim]|[/dim]  "
-        "[white]analytics[/white]  [dim]|[/dim]  [white]export[/white]"
-    )
+    console.print(Panel(
+        "  [bold white]Task Management[/bold white]\n"
+        "  [white]add[/white]                       Add a task interactively\n"
+        "  [white]add --ai[/white]                  Natural language task parsing\n"
+        "  [white]list[/white]                      List all active tasks\n"
+        "  [white]list --status pending[/white]     Filter: pending / completed\n"
+        "  [white]list --category Work[/white]      Filter by category\n"
+        "  [white]list --priority High[/white]      Filter by priority\n"
+        "  [white]complete <ID>[/white]             Mark task as done\n"
+        "  [white]delete <ID>[/white]               Soft-delete to recycle bin\n"
+        "  [white]edit <ID>[/white]                 Edit any field interactively\n"
+        "  [white]search \"query\"[/white]           Search by name, notes, category\n"
+        "\n"
+        "  [bold white]Recycle Bin[/bold white]\n"
+        "  [white]bin[/white]                       View recycle bin\n"
+        "  [white]restore <ID>[/white]              Restore a deleted task\n"
+        "\n"
+        "  [bold white]AI & Productivity[/bold white]\n"
+        "  [white]chat[/white]                      AI chat — manage tasks naturally\n"
+        "  [white]optimize[/white]                  Interactive AI schedule optimizer\n"
+        "  [white]focus <ID>[/white]                Pomodoro focus timer (25 min)\n"
+        "  [white]focus <ID> --minutes 50[/white]   Custom duration\n"
+        "\n"
+        "  [bold white]Reports & Extras[/bold white]\n"
+        "  [white]analytics[/white]                 Productivity stats + bar charts\n"
+        "  [white]export[/white]                    Export Markdown report\n"
+        "  [white]weather[/white]                   Current weather (auto-detects city)\n"
+        "  [white]weather \"City\"[/white]            Set your city and show weather",
+        title="[dim]Commands — taskflow <command>[/dim]",
+        border_style="dim",
+        padding=(0, 2),
+    ))
 
 
 # CLI Group
+
+def _ensure_reminder_worker():
+    """
+    Spawn reminder_worker.py as a detached background process if not already running.
+    Works even after the CLI exits — notifications come via Windows toast.
+    """
+    import subprocess
+    from pathlib import Path
+
+    pid_file    = Path.home() / ".taskflow_reminder.pid"
+    worker_path = Path(__file__).parent / "reminder_worker.py"
+
+    if not worker_path.exists():
+        return  # worker script missing — skip silently
+
+    # Check if a previously spawned worker is still alive
+    if pid_file.exists():
+        try:
+            pid = int(pid_file.read_text().strip())
+            os.kill(pid, 0)   # raises if process is dead
+            return            # already running — nothing to do
+        except (OSError, ValueError):
+            pass  # dead or stale PID — spawn a fresh one
+
+    # Spawn detached — no window, survives CLI exit
+    try:
+        if sys.platform == "win32":
+            subprocess.Popen(
+                [sys.executable, str(worker_path)],
+                creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NO_WINDOW,
+                close_fds=True,
+            )
+        else:
+            subprocess.Popen(
+                [sys.executable, str(worker_path)],
+                start_new_session=True,
+            )
+    except Exception:
+        pass   # spawn failure is non-critical — CLI still works fine
+
 
 @click.group(invoke_without_command=True, context_settings={"help_option_names": ["-h", "--help"]})
 @click.pass_context
 def cli(ctx):
     """TaskFlow Pro -- Smart Productivity CLI by DevNest"""
     _check_expiry()
+    _ensure_reminder_worker()   # background toast notifications — no second terminal needed
     if ctx.invoked_subcommand is None:
         _show_dashboard()
 
@@ -958,7 +1040,7 @@ def edit(task_id):
     if remind_in:
         _now = now_local()
         try:
-            r_dt = datetime.strptime(remind_in, "%Y-%m-%d %H:%M")
+            r_dt = datetime.strptime(remind_in, "%Y-%m-%d %H:%M").replace(tzinfo=get_tz())
             if r_dt <= _now:
                 console.print(
                     f"  [red]✗ '{remind_in}' is in the past — reminder won't fire. Skipped.[/red]"
@@ -1080,7 +1162,7 @@ def _reminder_daemon(ctrl, console_ref):
         except Exception:
             # daemon must not crash the main process
             pass
-        _time.sleep(30)
+        _time.sleep(10)
 
 
 # chat
@@ -1098,10 +1180,10 @@ def chat():
     _rt.Thread(target=_reminder_daemon, args=(ctrl, console), daemon=True).start()
 
     console.print(Panel(
-        "[bold white]TaskFlow AI Chat[/bold white]\n\n"
-        "[dim]Talk naturally in any language. AI remembers your task draft mid-conversation.\n"
-        "Type [white]/help[/white] for slash commands or [white]/exit[/white] to leave.[/dim]",
-        border_style="dim",
+        "[bold white]TaskFlow AI[/bold white]  [dim]·  Chat Mode[/dim]\n\n"
+        "[dim]Talk naturally — any language, any task.\n"
+        "[white]/help[/white] for commands  ·  [white]/exit[/white] to leave[/dim]",
+        border_style="cyan",
         padding=(0, 2),
     ))
     console.print()
@@ -1210,7 +1292,7 @@ def chat():
     # Main chat loop
     while True:
         try:
-            user_input = Prompt.ask("[bold white]You[/bold white]").strip()
+            user_input = Prompt.ask("[dim]>[/dim] [bold white]you[/bold white]").strip()
         except (KeyboardInterrupt, EOFError):
             console.print("\n  [dim]Chat closed.[/dim]")
             break
@@ -1286,8 +1368,8 @@ def chat():
 
             if err:
                 console.print(Panel(
-                    f"[yellow]⚠  {err}[/yellow]",
-                    title="[dim]AI[/dim]", border_style="yellow", padding=(0, 2),
+                    f"[yellow]{err}[/yellow]",
+                    title="[dim]Error[/dim]", border_style="red", padding=(0, 2),
                 ))
                 console.print()
                 continue
@@ -1300,9 +1382,16 @@ def chat():
 
             # Print AI reply
             if reply:
+                ai_title = f"[dim]TaskFlow AI[/dim]"
+                if intent_name not in ("chitchat", "unclear"):
+                    _, _col, _disp = INTENT_ICONS.get(intent_name, ("", "dim", ""))
+                    if _disp:
+                        ai_title = f"[dim]TaskFlow AI  ·  [{_col}]{_disp}[/{_col}][/dim]"
                 console.print(Panel(
                     f"[white]{reply}[/white]",
-                    title="[dim]AI[/dim]", border_style="dim", padding=(0, 2),
+                    title=ai_title,
+                    border_style="cyan",
+                    padding=(0, 2),
                 ))
 
             if not action:
@@ -1465,12 +1554,30 @@ def optimize():
 
     pending = ctrl.list_tasks(status="pending")
     if not pending:
-        console.print("  [dim]No pending tasks to optimize.[/dim]")
+        console.print(Panel(
+            "[white]No pending tasks found.[/white]\n\n"
+            "[dim]Add some tasks first:\n"
+            "  taskflow add          — interactive\n"
+            "  taskflow add --ai     — natural language[/dim]",
+            title="[dim]Schedule Optimizer[/dim]",
+            border_style="dim", padding=(0, 2),
+        ))
         return
+
+    if len(pending) == 1:
+        console.print(Panel(
+            f"[yellow]Only 1 task found: [white]{pending[0]['name']}[/white][/yellow]\n\n"
+            "[dim]Optimize works best with 3+ tasks so AI can build a real time-blocked day.\n"
+            "Add more tasks and run again, or continue with 1 task.[/dim]",
+            title="[dim]Schedule Optimizer[/dim]",
+            border_style="yellow", padding=(0, 2),
+        ))
+        if not Confirm.ask("  Continue anyway?", default=False):
+            return
 
     console.print(Panel(
         f"[bold white]Schedule Optimizer[/bold white]\n"
-        f"[dim]{len(pending)} pending task(s) found. Answer a few questions first.[/dim]",
+        f"[dim]{len(pending)} task(s) found.  Answer a few questions — AI builds 3 variants in parallel.[/dim]",
         border_style="dim",
         padding=(0, 2),
     ))
@@ -1489,23 +1596,71 @@ def optimize():
     goal_choice = Prompt.ask("  Choice", choices=list(_goal_map.keys()), default="2")
     goal = _goal_map[goal_choice][0]
 
-    start_time = Prompt.ask("  [white]Start time (HH:MM)[/white]", default="09:00").strip()
-    end_time   = Prompt.ask("  [white]End time   (HH:MM)[/white]", default="18:00").strip()
+    from timezone_utils import now_local as _now_local
+    from datetime import datetime as _dt_cls
+
+    _SKIP_WORDS = {"no", "n", "skip", "none", "nahi", "nope"}
+
+    # Start time — accept "now" / "abhi" as current local time
+    _raw_start = Prompt.ask("  [white]Start time (HH:MM)[/white]", default="09:00").strip()
+    if _raw_start.lower() in ("now", "abhi", "current"):
+        start_time = _now_local().strftime("%H:%M")
+        console.print(f"  [dim]Using current time: [white]{start_time}[/white][/dim]")
+    else:
+        try:
+            _dt_cls.strptime(_raw_start, "%H:%M")
+            start_time = _raw_start
+        except ValueError:
+            start_time = "09:00"
+            console.print(f"  [yellow]Invalid time '{_raw_start}' — defaulting to 09:00[/yellow]")
+
+    # End time — cap 24:00 / midnight at 23:59
+    _raw_end = Prompt.ask("  [white]End time   (HH:MM)[/white]", default="18:00").strip()
+    if _raw_end in ("24:00", "midnight") or _raw_end.lower() in ("midnight", "end of day", "eod"):
+        end_time = "23:59"
+        console.print(f"  [dim]End time capped to [white]23:59[/white][/dim]")
+    else:
+        try:
+            _dt_cls.strptime(_raw_end, "%H:%M")
+            end_time = _raw_end
+        except ValueError:
+            end_time = "18:00"
+            console.print(f"  [yellow]Invalid time '{_raw_end}' — defaulting to 18:00[/yellow]")
+
+    # Validate window is at least 30 minutes
+    try:
+        from datetime import datetime as _dt_cls2
+        _s = _dt_cls2.strptime(start_time, "%H:%M")
+        _e = _dt_cls2.strptime(end_time,   "%H:%M")
+        _window_min = (_e.hour * 60 + _e.minute) - (_s.hour * 60 + _s.minute)
+        if _window_min < 30:
+            console.print(Panel(
+                f"[yellow]Window is only [white]{_window_min} minutes[/white] "
+                f"({start_time} → {end_time}).[/yellow]\n\n"
+                "[dim]Optimize needs at least 30 minutes to build a meaningful schedule.\n"
+                "A full day window like 09:00 → 18:00 works best.[/dim]",
+                title="[dim]Window Too Short[/dim]",
+                border_style="yellow", padding=(0, 2),
+            ))
+            if not Confirm.ask("  Continue anyway?", default=False):
+                return
+    except ValueError:
+        pass  # already validated above; ignore edge cases
 
     console.print()
     console.print(_task_table(pending, f"Pending Tasks ({len(pending)})"))
     deadline_raw = Prompt.ask(
         "  [white]Any hard deadline today? (Task ID or Enter to skip)[/white]", default=""
-    ).strip().upper()
+    ).strip()
 
     deadline_task = None
-    if deadline_raw:
-        t, _ = ctrl.get_task(deadline_raw)
+    if deadline_raw and deadline_raw.lower() not in _SKIP_WORDS:
+        t, _ = ctrl.get_task(deadline_raw.upper())
         if t:
             deadline_task = t
             console.print(f"  [dim]Deadline pinned: [white]{t['name']}[/white][/dim]")
         else:
-            console.print(f"  [yellow]Task {deadline_raw} not found — skipping deadline pin.[/yellow]")
+            console.print(f"  [dim]No matching task — skipping deadline pin.[/dim]")
 
     # Step 2: Generate 3 variants in parallel
     console.print()
@@ -1582,6 +1737,51 @@ def optimize():
         with open(fn, "w", encoding="utf-8") as f:
             f.write(chosen_sched)
         console.print(f"  [dim]Saved: [white]{fn}[/white][/dim]")
+
+
+# watch
+
+@cli.command()
+@click.option("--interval", "-i", default=30, show_default=True, help="Check interval in seconds")
+def watch(interval):
+    """
+    Reminder daemon — keep this running in a separate terminal.
+    Checks every INTERVAL seconds and fires any due reminders.
+    """
+    _check_expiry()
+    ctrl = _get_ctrl()
+
+    console.print(Panel(
+        "[bold white]TaskFlow Reminder Watch[/bold white]\n\n"
+        f"[dim]Checking every [white]{interval}s[/white] for due reminders.\n"
+        "Keep this terminal open. Press [white]Ctrl+C[/white] to stop.[/dim]",
+        border_style="cyan",
+        padding=(0, 2),
+    ))
+
+    try:
+        while True:
+            try:
+                due = ctrl.get_due_reminders()
+                for task in due:
+                    due_part = ""
+                    if task.get("due_date"):
+                        due_part = f"  [dim]{task['due_date']}"
+                        if task.get("due_time"):
+                            due_part += f" {task['due_time']}"
+                        due_part += "[/dim]"
+                    console.print(
+                        f"\n  [bold cyan]🔔 REMINDER:[/bold cyan] "
+                        f"[bold white]{task['name']}[/bold white]"
+                        + due_part
+                        + f"  [dim]({task['category']} · {task['priority']})[/dim]"
+                    )
+                    ctrl.mark_reminder_sent(task["id"])
+            except Exception as e:
+                console.print(f"  [dim red]Watch error: {e}[/dim red]")
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        console.print("\n  [dim]Watch stopped.[/dim]")
 
 
 # focus
