@@ -12,31 +12,22 @@ set "DIM=%ESC%[2m"
 set "BOLD=%ESC%[1m"
 set "NC=%ESC%[0m"
 
-REM Carriage return for overwriting the tip line in-place
-for /f %%a in ('copy /Z "%~f0" nul') do set "CR=%%a"
-
-REM Spinner characters
-set "SP[0]=/"
-set "SP[1]=-"
-set "SP[2]=^\"
-set "SP[3]=|"
-
 REM Tips shown while install runs
 set "T[0]=Break big tasks into 25-min Pomodoro blocks."
-set "T[1]=High priority first — your brain is freshest in the morning."
+set "T[1]=High priority first — brain is freshest in the morning."
 set "T[2]=Name tasks as actions: 'Write report' beats 'Report'."
 set "T[3]=A 3-day streak beats a perfect week you never started."
 set "T[4]=Less than 2 minutes? Do it now — don't add it to the list."
 set "T[5]=Set due dates even for flexible tasks — deadlines create focus."
 set "T[6]=Group similar tasks — context-switching kills momentum."
 set "T[7]=Complete your hardest task before lunch. Rest feels easy after."
-set "T[8]=Pending tasks drain energy even when you're not working on them."
+set "T[8]=Pending tasks drain energy even when you are not working."
 set "T[9]=What gets measured gets done — check analytics weekly."
-set "T[10]=Timeboxing beats to-do lists. Schedule the task, not the intent."
+set "T[10]=Timeboxing beats to-do lists. Schedule the task, not just intent."
 set "T[11]=Done is better than perfect. Ship, then refine."
-set "T[12]=One task at a time. Multitasking is just expensive task-switching."
+set "T[12]=One task at a time. Multitasking is expensive task-switching."
 set "T[13]=Your future self will thank you for the due date you set today."
-set "T[14]=Productivity is not about doing more — it's about what matters."
+set "T[14]=Productivity is not about doing more — it is about what matters."
 set "TIP_COUNT=15"
 
 set "DONE_FILE=%TEMP%\taskflow_install.done"
@@ -80,7 +71,7 @@ echo %GREEN%[OK]%NC%    Python %PY_FULL%
 
 REM ── Virtual environment ────────────────────────────────────────────────────
 if not exist "venv" (
-    echo %DIM%       Creating virtual environment...%NC%
+    echo %DIM%  [..] Creating virtual environment...%NC%
     python -m venv venv
     if errorlevel 1 (
         echo %RED%[ERROR]%NC% Failed to create virtual environment.
@@ -94,14 +85,12 @@ if not exist "venv" (
 call venv\Scripts\activate.bat
 
 echo.
-echo %DIM%  Tips will show while we get things ready...%NC%
-echo.
 
 REM ── Upgrade pip ────────────────────────────────────────────────────────────
 if exist "%DONE_FILE%" del "%DONE_FILE%" >nul 2>&1
 if exist "%EC_FILE%"   del "%EC_FILE%"   >nul 2>&1
 start /b cmd /c "venv\Scripts\python.exe -m pip install --upgrade pip --quiet > "%LOG_FILE%" 2>&1 & echo %%ERRORLEVEL%% > "%EC_FILE%" & echo 1 > "%DONE_FILE%""
-set "STEP_LABEL=Upgrading pip   "
+set "STEP_LABEL=Upgrading pip"
 call :tips_wait
 set /p _EC=<"%EC_FILE%"
 if "!_EC!" NEQ "0" (
@@ -115,7 +104,7 @@ if exist "requirements.txt" (
     if exist "%DONE_FILE%" del "%DONE_FILE%" >nul 2>&1
     if exist "%EC_FILE%"   del "%EC_FILE%"   >nul 2>&1
     start /b cmd /c "venv\Scripts\python.exe -m pip install --quiet -r requirements.txt > "%LOG_FILE%" 2>&1 & echo %%ERRORLEVEL%% > "%EC_FILE%" & echo 1 > "%DONE_FILE%""
-    set "STEP_LABEL=Installing deps "
+    set "STEP_LABEL=Installing   "
     call :tips_wait
     set /p _EC=<"%EC_FILE%"
     if "!_EC!" NEQ "0" (
@@ -133,7 +122,7 @@ if errorlevel 1 (
     if exist "%DONE_FILE%" del "%DONE_FILE%" >nul 2>&1
     if exist "%EC_FILE%"   del "%EC_FILE%"   >nul 2>&1
     start /b cmd /c "venv\Scripts\python.exe -m pip install --quiet tzdata > "%LOG_FILE%" 2>&1 & echo %%ERRORLEVEL%% > "%EC_FILE%" & echo 1 > "%DONE_FILE%""
-    set "STEP_LABEL=Installing tz   "
+    set "STEP_LABEL=tzdata      "
     call :tips_wait
     set /p _EC=<"%EC_FILE%"
     if "!_EC!" NEQ "0" (
@@ -154,37 +143,29 @@ python main.py %*
 goto :eof
 
 
-REM ── Tips spinner subroutine ────────────────────────────────────────────────
-REM Waits until %DONE_FILE% appears, spinning tips in the meantime.
+REM ── Tips subroutine ────────────────────────────────────────────────────────
+REM Prints a new tip line every ~3s until DONE_FILE appears.
+REM Uses ping for silent delay — timeout prints unwanted text in CMD.
 :tips_wait
-set /a _spin=0
 set /a _tip=0
-set /a _tick=0
 
-:_spin_loop
+:_tip_loop
 if exist "%DONE_FILE%" (
     del "%DONE_FILE%" >nul 2>&1
-    REM Clear the tip line
-    <nul set /p "=!CR!                                                                                "
-    echo.
     goto :eof
 )
 
-set /a _sidx=_spin %% 4
 set /a _tidx=_tip %% TIP_COUNT
-call set "_sc=%%SP[!_sidx!]%%"
 call set "_tc=%%T[!_tidx!]%%"
+echo   %CYAN%[!STEP_LABEL!]%NC%  %DIM%!_tc!%NC%
 
-REM Truncate tip to 55 chars so it never wraps to next line
-set "_tc_short=!_tc:~0,55!"
-<nul set /p "=!CR!  %CYAN%[!_sc!]%NC%  %DIM%!STEP_LABEL!%NC%  !_tc_short!          "
+REM ping 4 times = ~3 second wait, fully silent
+ping -n 4 127.0.0.1 >nul 2>&1
 
-timeout /t 1 /nobreak >nul
-
-set /a _spin+=1
-set /a _tick+=1
-if !_tick! GEQ 3 (
-    set /a _tip+=1
-    set /a _tick=0
+if exist "%DONE_FILE%" (
+    del "%DONE_FILE%" >nul 2>&1
+    goto :eof
 )
-goto _spin_loop
+
+set /a _tip+=1
+goto _tip_loop
